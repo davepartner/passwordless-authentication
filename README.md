@@ -117,6 +117,35 @@ A full **threat model** — what each control defends against and why — is in
 
 ---
 
+## Strengths & limitations
+
+**Strengths**
+
+- **Zero friction** — one field, one code, straight in. Nothing to remember or reset.
+- **Enumeration-resistant** — the server never reveals whether an email is registered.
+- **No password surface** — nothing to store, steal, or reset; no credential-stuffing target.
+- **Email-verified by construction** — possessing the code proves the inbox.
+- **Defense in depth** — hashed OTPs, constant-time comparison, expiry, attempt limits, and
+  server-authoritative rate limiting.
+- **Portable** — one spec, any backend, with concrete Node/Swift/Kotlin examples.
+- **Optional biometric layer** — a phishing-resistant, device-bound one-tap unlock on mobile.
+
+**Limitations**
+
+- **OTP is still phishable.** A real-time relay can proxy a code as easily as a password. For
+  high-value targets, prefer WebAuthn/passkeys.
+- **6-digit codes are low-entropy** (10⁶). Safe only because of expiry + attempt limits + rate
+  limiting; raise to 8 digits for higher assurance.
+- **Depends on email deliverability.** "Never fails" assumes SPF/DKIM/DMARC and a healthy sending
+  domain. If the code lands in spam, the flow stalls.
+- **Unified entry trades off email bombing.** It must send to any address to avoid enumeration; the
+  send rate limits are the guardrail.
+- **Not an identity provider.** No social login, SSO, TOTP, or password-recovery story — it's a
+  focused email-OTP primitive you compose into a larger auth system.
+- **Examples are illustrative**, not production drop-ins (in-memory stores, `console.log` mail).
+
+---
+
 ## Face ID / biometric login (mobile)
 
 For native iOS/Android apps, add a one-tap unlock on top of the email OTP:
@@ -197,3 +226,8 @@ sign in with fingerprint, sign in with biometrics, fingerprint login, device rev
 lifecycle, phishing resistant, phishing resistance, OTP phishing, threat model, threat modeling,
 SPF DKIM DMARC, sender authentication, email deliverability, bounce handling, email canonicalization,
 data retention, GDPR, PII, opaque token, signed token, JWT session, requestId, challenge id.
+
+Simple authentication, straightforward authentication, high-fidelity authentication, reliable
+authentication, authentication that never fails, email-only signup, email-only registration, no
+password signup, contact button, contact admin, flash message, action guidance, frictionless login,
+simple login, quick sign in, onboarding without a password, low-friction auth.
