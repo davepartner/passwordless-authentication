@@ -6,9 +6,12 @@ description: >-
   custom backend. Use when adding "login without a password", "magic OTP login", "email OTP sign-in",
   "passwordless auth", or "one-time code login". Delivers a single email entry field, a 6-digit code
   grid with auto-focus, a server-synced resend countdown, persistent spam-folder guidance, immediate
-  inline errors, and full anti-user-enumeration logic with hashed OTPs and rate limiting. Triggers:
-  "passwordless login", "email OTP", "one-time passcode", "login with a code", "remove passwords",
-  "OTP authentication", "user enumeration resistant login", "magic link alternative".
+  inline errors, and full anti-user-enumeration logic with hashed OTPs and rate limiting. Also
+  covers Face ID / Touch ID / biometric login for native mobile apps (Secure Enclave, Android
+  Keystore, challenge-response with a device-bound key). Triggers: "passwordless login", "email OTP",
+  "one-time passcode", "login with a code", "remove passwords", "OTP authentication", "user
+  enumeration resistant login", "magic link alternative", "Face ID login", "FaceID", "Touch ID",
+  "biometric login", "biometric auth", "passkey", "mobile biometric login".
 ---
 
 # Passwordless Email OTP Authentication — Platform-Agnostic Skill
@@ -137,6 +140,23 @@ One **active** challenge per email at a time. Issuing a new code invalidates the
 
 ---
 
+## Biometric (Face ID / Touch ID) login for mobile
+
+For native mobile apps, layer a **frictionless biometric re-auth** on top of the email OTP:
+
+- **Principle:** biometrics authenticate the user *to the device*, never to the server. The device
+  proves possession of a device-bound private key (stored in the Secure Enclave on iOS / the Android
+  Keystore, gated by biometrics) by signing a server challenge. The server verifies the signature
+  against a stored public key. The server never sees a face scan or fingerprint, and the private key
+  never leaves secure hardware.
+- **First login** (email OTP) **enrolls the device**; every login after that is a one-tap Face ID
+  unlock — no code, no typing.
+- Full architecture, flows, and platform specifics: `references/biometric-login.md`.
+- Concrete reference code: `examples/ios-faceid/` (Swift) and `examples/android-biometric/` (Kotlin),
+  plus the server-side verify in `examples/node-express/`.
+
+---
+
 ## How to apply this skill
 
 1. Map the **flow** and **API contract** onto your framework's routing/controllers.
@@ -174,3 +194,5 @@ adapting — those are what make the system safe.
 - `references/security-rules.md` — the security invariants with exact algorithms and primitives.
 - `references/ux-rules.md` — the UX behaviours with accessibility notes.
 - `references/reference-implementation.md` — neutral pseudocode to translate into any stack.
+- `references/biometric-login.md` — Face ID / Touch ID login architecture, flows, and platform specifics.
+- `examples/` — concrete reference implementations (Node/Express backend, iOS Face ID, Android biometric).

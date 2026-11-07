@@ -40,6 +40,7 @@ tickets. Passwordless OTP auth removes the thing attackers steal (the password) 
 | **Hashed OTPs** | Codes stored as bcrypt/argon2id hashes, compared in constant time, auto-expiring. |
 | **Hardened session** | Session regeneration on login, CSRF protection, transient state cleared. |
 | **Support link** | "Trouble logging in? Contact admin" on both forms. |
+| **Face ID / biometric login** | Optional mobile re-auth: a device-bound key (Secure Enclave / Android Keystore) signs a server challenge. |
 
 ---
 
@@ -51,7 +52,12 @@ references/
 ├── architecture.md                   # Full flow, sequence diagram, API detail, edge cases
 ├── security-rules.md                 # Security invariants with exact algorithms + primitives
 ├── ux-rules.md                       # UX behaviours with accessibility notes
-└── reference-implementation.md       # Language-neutral pseudocode to translate into any stack
+├── reference-implementation.md       # Language-neutral pseudocode to translate into any stack
+└── biometric-login.md                # Face ID / Touch ID login architecture for mobile
+examples/
+├── node-express/                     # TypeScript/Express backend (OTP + biometric server side)
+├── ios-faceid/                       # Swift Face ID client
+└── android-biometric/                # Kotlin biometric client
 LICENSE
 ```
 
@@ -88,6 +94,21 @@ redirect → /dashboard
 
 ---
 
+## Face ID / biometric login (mobile)
+
+For native iOS/Android apps, add a one-tap unlock on top of the email OTP:
+
+- **Biometrics authenticate the user to the device, never the server.** The device proves possession
+  of a device-bound private key (Secure Enclave / Android Keystore) by signing a server challenge; the
+  server verifies against a stored public key.
+- **First OTP login enrolls the device**; after that, login is a Face ID prompt — no code, no typing.
+- The private key never leaves secure hardware, and a leaked database contains only public keys.
+
+See `references/biometric-login.md` for the full architecture, and `examples/` for concrete Swift
+(iOS) and Kotlin (Android) code plus the server-side verification.
+
+---
+
 ## License
 
 MIT — see [LICENSE](./LICENSE).
@@ -116,3 +137,10 @@ AI agent skill, Claude Code skill, Claude skill, Cursor rules, AI coding rules, 
 prompt, LLM rules, agentic development, developer skill, engineering skill, auth boilerplate, login
 boilerplate, secure auth template, reusable component, platform agnostic skill, framework agnostic
 skill.
+
+Face ID, FaceID, Touch ID, biometric login, biometric authentication, biometric auth, passkey,
+passkeys, device credential, device-bound key, WebAuthn, FIDO2, secure enclave, Apple Secure Enclave,
+LocalAuthentication, LAContext, Android Keystore, BiometricPrompt, BiometricManager,
+KeyGenParameterSpec, ECDSA signature, challenge response, key pair enrollment, mobile authentication,
+iOS authentication, Android authentication, Swift Face ID, Kotlin biometric, sign in with Face ID,
+sign in with fingerprint, sign in with biometrics, fingerprint login.
