@@ -9,7 +9,7 @@ correct behaviour expressed so any framework can implement it. Keep the security
 ## Constants
 
 ```
-OTP_LENGTH       = 6                 # raise to 8 for higher assurance
+OTP_LENGTH       = 8                 # raise to 10 for higher assurance
 OTP_LIFETIME     = 10 minutes
 MAX_ATTEMPTS     = 5
 RESEND_COOLDOWN  = 30 seconds

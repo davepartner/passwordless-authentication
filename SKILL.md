@@ -1,7 +1,7 @@
 ---
 name: passwordless-authentication
 description: >-
-  Build a secure, enumeration-resistant passwordless email OTP sign-in — single email field, 6-digit
+  Build a secure, enumeration-resistant passwordless email OTP sign-in — single email field, 8-digit
   code, resend cooldown — for any backend, plus optional Face ID / Touch ID biometric login for mobile
   (Secure Enclave / Android Keystore challenge-response). Use when adding email-OTP or one-time-code
   login, or mobile biometric re-auth. Triggers: "passwordless login", "email OTP", "one-time code
@@ -10,8 +10,8 @@ description: >-
 
 # Passwordless Email OTP Authentication — Platform-Agnostic Skill
 
-Add frictionless passwordless sign-in to any application. Users enter **one email**, receive a
-**6-digit one-time code**, and are signed in (or auto-registered) with no password and no exposed
+Add frictionless passwordless sign-in to any application. Users enter **one email**, receive an
+**8-digit one-time code**, and are signed in (or auto-registered) with no password and no exposed
 "does this email exist?" signal. For native mobile apps, add an optional **Face ID / Touch ID**
 one-tap re-auth on top.
 
@@ -30,7 +30,7 @@ What this system defends against, and how:
 | Threat | Defended by |
 |--------|-------------|
 | User enumeration (probing which emails exist) | No user lookup at `request`; uniform responses; constant-time compare |
-| OTP brute force (online guessing) | 6-digit code + expiry + per-challenge attempt limit + per-email verify rate limit |
+| OTP brute force (online guessing) | 8-digit code + expiry + per-challenge attempt limit + per-email verify rate limit |
 | OTP replay | Single-use challenge (consumed on success) |
 | Timing side-channel | Constant-time compare against a dummy hash when no challenge exists |
 | Email bombing / harassment | Per-email + per-IP send rate limits |
@@ -79,7 +79,7 @@ Path names are illustrative — keep the shapes and semantics.
 ### `POST /auth/otp/verify`
 ```jsonc
 // request — the requestId binds this attempt to the issued challenge
-{ "requestId": "<opaque id>", "code": "123456" }
+{ "requestId": "<opaque id>", "code": "12345678" }
 
 // success
 { "ok": true, "redirect": "/dashboard" }
@@ -154,8 +154,8 @@ co-existing challenges is bounded by the send rate limits. Purge expired/consume
   a TTL), and define a retention window for IP logs. This is a GDPR/CCPA concern, not just hygiene.
 - **Email canonicalization.** Normalize case and whitespace; decide a policy for `+`-tags, provider
   dot-stripping (Gmail), and IDN/punycode so the same mailbox is always one key.
-- **Code length by assurance.** 6 digits is the default (with the limits above). For higher-assurance
-  contexts, raise to 8 digits.
+- **Code length by assurance.** 8 digits is the default (with the limits above). For higher-assurance
+  contexts, raise to 10 digits.
 
 > **Trade-off to document:** the unified entry sends to any address (to avoid enumeration). Cap this
 > with the send rate limits to prevent email bombing; the limits are what keep this safe.
@@ -168,7 +168,7 @@ co-existing challenges is bounded by the send rate limits. Purge expired/consume
 2. **Dynamic button** — client-side regex enables the submit button the instant the email is valid;
    show a visible hint while disabled (never a silent dead state).
 3. **Code entry** — a single `inputmode="numeric"` `autocomplete="one-time-code"` field is
-   **preferred** (best screen-reader and browser-autofill support). A 6-box grid is acceptable if
+   **preferred** (best screen-reader and browser-autofill support). An 8-box grid is acceptable if
    each box has an `aria-label` and paste-to-fill is handled.
 4. **Persistent helper banner** — "Check your inbox **and** spam/junk folder" stays visible for the
    whole verification step. Add "still nothing after ~60s? resend" guidance.

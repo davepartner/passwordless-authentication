@@ -10,7 +10,7 @@ your stack. Do not weaken these.
 Defending against, in priority order:
 
 1. **User enumeration** — an attacker probing which email addresses have accounts.
-2. **OTP brute force** — online guessing of the 6-digit code.
+2. **OTP brute force** — online guessing of the 8-digit code.
 3. **OTP replay** — reusing a captured/intercepted code.
 4. **Timing side-channels** — inferring whether a code/challenge exists from response time.
 5. **Email bombing / harassment** — abusing the send flow to flood a target inbox.
@@ -50,8 +50,8 @@ in logs, error messages, API responses, or analytics.
 - Go: `golang.org/x/crypto/bcrypt`
 - Django: `make_password` (PBKDF2 — acceptable; prefer argon2)
 
-**Length vs entropy:** 6 digits = 10⁶ possibilities. Hashing adds no entropy; the security comes from
-expiry + attempt limits + rate limiting. **6 digits is the default; raise to 8 for higher-assurance
+**Length vs entropy:** 8 digits = 10⁸ possibilities. Hashing adds no entropy; the security comes from
+expiry + attempt limits + rate limiting. **8 digits is the default; raise to 10 for higher-assurance
 contexts.** State the choice in config, not in code.
 
 ---
@@ -78,9 +78,9 @@ response time the same whether or not an OTP was issued.
 
 **Rule:** generate the digits with a cryptographically secure RNG, never a predictable PRNG.
 
-- Node: `crypto.randomInt(0, 1_000_000)` (zero-pad)
-- PHP: `random_int(0, 999999)`
-- Python: `secrets.randbelow(1_000_000)`
+- Node: `crypto.randomInt(0, 100_000_000)` (zero-pad)
+- PHP: `random_int(0, 99999999)`
+- Python: `secrets.randbelow(100_000_000)`
 - Go: `crypto/rand`
 - .NET: `RandomNumberGenerator.GetInt32`
 

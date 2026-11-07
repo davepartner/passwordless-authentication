@@ -4,6 +4,9 @@ All notable changes to this skill. Pin by tag/commit when consuming.
 
 ## [Unreleased]
 
+### Changes
+- **OTP length raised to 8 digits** (default) for higher assurance.
+
 ### Security fixes (from the initial review)
 - **Challenges are now keyed by `requestId` (not email).** Requesting a code for an email no longer
   invalidates that email's in-flight challenge — removes the login-DoS vector.

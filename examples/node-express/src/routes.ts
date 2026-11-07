@@ -24,7 +24,7 @@ const MAX_DEVICES_PER_ACCOUNT = 5;
 export const router = Router();
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
-const CODE_RE = /^\d{6}$/;
+const CODE_RE = /^\d{8}$/;
 
 function normalize(email: string): string {
   return email.trim().toLowerCase();

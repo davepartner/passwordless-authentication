@@ -26,20 +26,20 @@ React/Vue/Svelte, native mobile). Accessibility notes included.
 
 ## Screen 2 — Verify (code entry)
 
-- **Context line:** "Enter the 6-digit code we sent to **{email}**."
+- **Context line:** "Enter the 8-digit code we sent to **{email}**."
 
 - **Code entry — two acceptable patterns:**
 
   **Preferred:** a **single** field with `inputmode="numeric"` and `autocomplete="one-time-code"`.
   This is the most accessible and works with OS/browser OTP autofill.
 
-  **Alternative (6-box grid):** six side-by-side single-character inputs. If you choose this:
+  **Alternative (8-box grid):** eight side-by-side single-character inputs. If you choose this:
   - `inputmode="numeric"`, `maxlength="1"`, `pattern="[0-9]"`, `autocomplete="one-time-code"`.
   - **Auto-focus cascade:** typing a digit moves focus to the next box; backspace on an empty box
     moves focus back.
-  - **Paste-to-fill:** pasting a 6-digit string fills all boxes and focuses the last.
+  - **Paste-to-fill:** pasting an 8-digit string fills all boxes and focuses the last.
   - One hidden combined input holds the full code for submission.
-  - Each box has an `aria-label` ("Digit 1" … "Digit 6") and the grid is grouped with a label.
+  - Each box has an `aria-label` ("Digit 1" … "Digit 8") and the grid is grouped with a label.
 
 - **Persistent helper banner:** non-dismissing, info-styled: "Please check your inbox **and your
   spam/junk folder**." Visible for the entire verification step. Add: "Still nothing after ~60

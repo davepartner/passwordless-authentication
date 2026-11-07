@@ -4,7 +4,7 @@ A **secure, frictionless, user-enumeration-resistant passwordless email OTP auth
 specified as a reusable skill that works in **any stack** — Node/Express, Next.js, Django, Rails,
 Go, PHP/Laravel, FastAPI, or a custom backend.
 
-One email field in. A 6-digit code. Done. No password, no "does this account exist?" leak, no
+One email field in. An 8-digit code. Done. No password, no "does this account exist?" leak, no
 dead-end UX.
 
 This is **not** tied to a framework. It defines the flow, the API contract, the data model, the
@@ -48,7 +48,7 @@ tickets. Passwordless OTP auth removes the thing attackers steal (the password) 
 | **Email-only registration** | Sign-up is the same single email field — no name, no password; the account is created on the first successful code. |
 | **Anti-enumeration** | The request endpoint never queries the account store; identical response either way. |
 | **Dynamic button** | Client-side email regex enables the submit button the moment the address is valid. |
-| **Code entry** | Single `one-time-code` field (preferred) or a 6-box grid with auto-focus and paste-to-fill. |
+| **Code entry** | Single `one-time-code` field (preferred) or an 8-box grid with auto-focus and paste-to-fill. |
 | **Flash messages (action guidance)** | Persistent, non-dismissing messages that tell the user exactly what to do — "check your inbox and spam folder", "a new code has been sent". |
 | **Server-synced resend** | 30-second countdown; server independently enforces the cooldown + rate limits. |
 | **Immediate inline errors** | Wrong/expired code shows an inline message, no page reload. |
@@ -82,7 +82,7 @@ LICENSE
 ## The flow (one minute)
 
 ```
-POST /auth/otp/request  { email }              → issue + email 6-digit code (hashed, expiring)
+POST /auth/otp/request  { email }              → issue + email 8-digit code (hashed, expiring)
                                                  no user lookup — enumeration-safe
         ↓ (verify view: code entry, 30s countdown, "check spam" banner)
 POST /auth/otp/verify   { requestId, code }    → constant-time check → find-or-create user → login
@@ -134,8 +134,8 @@ A full **threat model** — what each control defends against and why — is in
 
 - **OTP is still phishable.** A real-time relay can proxy a code as easily as a password. For
   high-value targets, prefer WebAuthn/passkeys.
-- **6-digit codes are low-entropy** (10⁶). Safe only because of expiry + attempt limits + rate
-  limiting; raise to 8 digits for higher assurance.
+- **8-digit codes are still low-entropy** (10⁸) relative to a password. Safe only because of expiry +
+  attempt limits + rate limiting; raise to 10 digits for higher assurance.
 - **Depends on email deliverability.** "Never fails" assumes SPF/DKIM/DMARC and a healthy sending
   domain. If the code lands in spam, the flow stalls.
 - **Unified entry trades off email bombing.** It must send to any address to avoid enumeration; the
@@ -172,7 +172,7 @@ https://github.com/davepartner/passwordless-authentication (pin it by tag or com
 and implement email-OTP login for this project following its spec exactly:
 
 - One email field for both login and signup (auto-register on first code) — no password, no name field.
-- A 6-digit code step with a persistent "check your inbox and spam folder" flash message and a 30s
+- An 8-digit code step with a persistent "check your inbox and spam folder" flash message and a 30s
   server-synced resend countdown.
 - A "Trouble logging in? Contact admin" button on every auth page, and inline errors with no reload.
 - The full security rules: hashed OTPs (bcrypt/argon2id), constant-time compare, expiry + attempt
@@ -199,10 +199,10 @@ MIT — see [LICENSE](./LICENSE).
 *Findable by AI agents and humans searching for passwordless authentication and OTP login:*
 
 Passwordless authentication, passwordless login, passwordless auth, email OTP, OTP authentication,
-email OTP login, one-time password, one-time passcode, one-time code, 6-digit code, magic link
+email OTP login, one-time password, one-time passcode, one-time code, 8-digit code, magic link
 alternative, login without password, sign in without password, remove passwords, passwordless design,
 platform agnostic authentication, framework agnostic auth, OTP verification flow, OTP verification
-UI, six digit input, OTP input grid, auto focus OTP, resend OTP countdown, resend cooldown, OTP
+UI, eight digit input, OTP input grid, auto focus OTP, resend OTP countdown, resend cooldown, OTP
 expiry, OTP rate limiting, email rate limiting, anti enumeration, user enumeration, enumeration
 resistant, enumeration attack, prevent user enumeration, account enumeration, secure login, secure
 authentication, hashed OTP, bcrypt OTP, argon2id OTP, constant time comparison, timing safe compare,

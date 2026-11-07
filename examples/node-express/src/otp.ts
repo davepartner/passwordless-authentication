@@ -1,7 +1,7 @@
 import bcrypt from 'bcrypt';
 import { randomInt } from 'node:crypto';
 
-export const OTP_LENGTH = 6;
+export const OTP_LENGTH = 8;
 export const OTP_LIFETIME_MS = 10 * 60 * 1000;
 export const MAX_ATTEMPTS = 5;
 export const RESEND_COOLDOWN_S = 30;
