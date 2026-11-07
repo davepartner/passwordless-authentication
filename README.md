@@ -1,5 +1,10 @@
 # Passwordless Authentication — Platform-Agnostic Email OTP
 
+> **This is an AI agent skill.** Designed to be pulled and used by AI agents — Claude Code, Codex,
+> Cursor, OpenCode, and other coding assistants — as a ruleset for building secure, frictionless
+> passwordless email-OTP authentication systems. The agent reads `SKILL.md` and `references/`, then
+> implements the flow correctly in whatever stack you're using.
+
 A **secure, frictionless, user-enumeration-resistant passwordless email OTP authentication system**,
 specified as a reusable skill that works in **any stack** — Node/Express, Next.js, Django, Rails,
 Go, PHP/Laravel, FastAPI, or a custom backend.
@@ -15,8 +20,9 @@ whatever stack you already use. A language-neutral pseudocode reference is inclu
 
 ## Who this is for
 
-This is for teams building apps that need **simple, straightforward, high-fidelity authentication** —
-email + a one-time code, nothing more. The entire system is engineered around one promise:
+This is for teams building apps — and the **AI agents** they use to build them — that need **simple,
+straightforward, high-fidelity authentication**: email + a one-time code, nothing more. The entire
+system is engineered around one promise:
 
 > **Authentication stays simple, and it never fails.**
 
