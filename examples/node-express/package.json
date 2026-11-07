@@ -6,7 +6,8 @@
   "description": "Reference implementation of the passwordless-authentication skill (Node + Express).",
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "start": "tsx src/server.ts"
+    "start": "tsx src/server.ts",
+    "test": "tsx --test src/otp.test.ts src/rateLimit.test.ts"
   },
   "dependencies": {
     "bcrypt": "^5.1.1",

@@ -11,9 +11,13 @@ shows one way to implement them.
 
 | Example | Stack | What it demonstrates |
 |---------|-------|----------------------|
-| `node-express/` | TypeScript + Express | The email-OTP backend (`request` / `verify` / `resend` / `logout`) plus the **server side** of biometric login (`enroll` / `challenge` / `verify`). |
+| `node-express/` | TypeScript + Express | The email-OTP backend (`request` / `verify` / `resend` / `logout`) plus the **server side** of biometric login (`enroll` / `revoke` / `challenge` / `verify`). Includes unit tests for the OTP and rate-limiter primitives. |
 | `ios-faceid/` | Swift | The **client side** of Face ID: generate a Secure-Enclave key, and sign a server challenge. |
 | `android-biometric/` | Kotlin | The **client side** of biometric login: a Keystore key gated by biometrics, and signing via `BiometricPrompt`. |
+
+The Node example implements the spec's key invariants: challenges **keyed by `requestId`** (no login
+DoS), **constant-time compare with a dummy-hash path**, verify rate-limiting that counts **failures
+only**, **authenticated** biometric enrollment, and an expiring/revocable session.
 
 ## How they map to the spec
 

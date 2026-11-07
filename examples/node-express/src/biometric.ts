@@ -4,7 +4,7 @@ import { createPublicKey, randomBytes, verify as cryptoVerify } from 'node:crypt
  * Server half of biometric (Face ID / Touch ID) login.
  *
  * The device signs a fresh challenge with a device-bound private key; we verify
- * against the public key enrolled during a prior OTP login. We never see
+ * against the public keys enrolled during a prior OTP login. We never see
  * biometric data, and we store only public keys.
  */
 
@@ -25,8 +25,8 @@ export function issueChallenge(): { challengeId: string; challenge: string } {
 
 /**
  * Verify an ECDSA signature (DER-encoded) over a challenge against an SPKI PEM
- * public key. Returns false for unknown/expired challenges — no distinction, so
- * no enumeration signal.
+ * public key. Pure check — does NOT consume the challenge, so a caller can try
+ * multiple enrolled keys for the same challenge.
  */
 export function verifySignature(
   challengeId: string,
@@ -35,7 +35,6 @@ export function verifySignature(
 ): boolean {
   const entry = challenges.get(challengeId);
   if (!entry || entry.expiresAt < Date.now()) return false;
-  challenges.delete(challengeId); // single use
 
   try {
     const key = createPublicKey(publicKeyPem);
@@ -48,4 +47,9 @@ export function verifySignature(
   } catch {
     return false;
   }
+}
+
+/** Consume (delete) a challenge after it has been used, pass or fail. */
+export function consumeChallenge(challengeId: string): void {
+  challenges.delete(challengeId);
 }

@@ -33,14 +33,14 @@ tickets. Passwordless OTP auth removes the thing attackers steal (the password) 
 | **Single email field** | One clean input for both login and registration (auto-register on first code). |
 | **Anti-enumeration** | The request endpoint never queries the account store; identical response either way. |
 | **Dynamic button** | Client-side email regex enables the submit button the moment the address is valid. |
-| **6-box code grid** | Six side-by-side inputs with auto-focus cascading and paste-to-fill. |
+| **Code entry** | Single `one-time-code` field (preferred) or a 6-box grid with auto-focus and paste-to-fill. |
 | **Persistent helper banner** | "Check your inbox and spam/junk folder" stays visible throughout verification. |
 | **Server-synced resend** | 30-second countdown; server independently enforces the cooldown + rate limits. |
 | **Immediate inline errors** | Wrong/expired code shows an inline message, no page reload. |
 | **Hashed OTPs** | Codes stored as bcrypt/argon2id hashes, compared in constant time, auto-expiring. |
 | **Hardened session** | Session regeneration on login, CSRF protection, transient state cleared. |
 | **Support link** | "Trouble logging in? Contact admin" on both forms. |
-| **Face ID / biometric login** | Optional mobile re-auth: a device-bound key (Secure Enclave / Android Keystore) signs a server challenge. |
+| **Face ID / biometric login** | Optional mobile re-auth: a device-bound key (Secure Enclave / Android Keystore) signs a server challenge, with device limits and revocation. |
 
 ---
 
@@ -55,9 +55,10 @@ references/
 ├── reference-implementation.md       # Language-neutral pseudocode to translate into any stack
 └── biometric-login.md                # Face ID / Touch ID login architecture for mobile
 examples/
-├── node-express/                     # TypeScript/Express backend (OTP + biometric server side)
+├── node-express/                     # TypeScript/Express backend (OTP + biometric server side) + unit tests
 ├── ios-faceid/                       # Swift Face ID client
 └── android-biometric/                # Kotlin biometric client
+CHANGELOG.md                          # version history — pin by tag/commit
 LICENSE
 ```
 
@@ -66,10 +67,10 @@ LICENSE
 ## The flow (one minute)
 
 ```
-POST /auth/otp/request  { email }            → issue + email 6-digit code (hashed, expiring)
-                                               no user lookup — enumeration-safe
-        ↓ (verify view: 6-box grid, 30s countdown, "check spam" banner)
-POST /auth/otp/verify   { email|token, code } → constant-time check → find-or-create user → login
+POST /auth/otp/request  { email }              → issue + email 6-digit code (hashed, expiring)
+                                                 no user lookup — enumeration-safe
+        ↓ (verify view: code entry, 30s countdown, "check spam" banner)
+POST /auth/otp/verify   { requestId, code }    → constant-time check → find-or-create user → login
         ↓
 redirect → /dashboard
 ```
@@ -83,11 +84,15 @@ redirect → /dashboard
 - **Hashed codes** — OTPs stored as `bcrypt` (cost ≥ 10) or `argon2id`, generated with a CSPRNG.
 - **Constant-time compare** — the hash verify runs even when no challenge exists (dummy hash), so
   timing can't reveal whether an OTP was issued.
-- **Rate limiting** — send limited per-email and per-IP; verify limited per-email; hard 30s resend
-  cooldown. The client timer is UX only; the server is authoritative.
+- **Rate limiting** — send limited per-email and per-IP; verify limited per-email (**failures only**);
+  hard 30s resend cooldown. The client timer is UX only; the server is authoritative.
 - **Session hardening** — session-id regeneration on login, `Secure`+`HttpOnly`+`SameSite` cookies or
   short-lived signed tokens, CSRF everywhere, transient state cleared.
 - **Email-verified on OTP** — proving the code marks the address verified.
+
+A full **threat model** — what each control defends against — is in `references/security-rules.md`,
+along with sender-auth (SPF/DKIM/DMARC), bounce-handling, retention/PII, and email-canonicalization
+guidance.
 
 > **Production notes:** serve over HTTPS, use a queue-capable mail provider, and back the rate
 > limiter with a shared store (Redis, etc.) so limits hold across instances.
@@ -108,6 +113,11 @@ See `references/biometric-login.md` for the full architecture, and `examples/` f
 (iOS) and Kotlin (Android) code plus the server-side verification.
 
 ---
+
+## Versioning
+
+This skill may evolve. **Pin it by commit hash or tag** when you pull it into a project, and re-run the
+verification checklist after updating. See `CHANGELOG.md`.
 
 ## License
 
@@ -143,4 +153,7 @@ passkeys, device credential, device-bound key, WebAuthn, FIDO2, secure enclave, 
 LocalAuthentication, LAContext, Android Keystore, BiometricPrompt, BiometricManager,
 KeyGenParameterSpec, ECDSA signature, challenge response, key pair enrollment, mobile authentication,
 iOS authentication, Android authentication, Swift Face ID, Kotlin biometric, sign in with Face ID,
-sign in with fingerprint, sign in with biometrics, fingerprint login.
+sign in with fingerprint, sign in with biometrics, fingerprint login, device revocation, device
+lifecycle, phishing resistant, phishing resistance, OTP phishing, threat model, threat modeling,
+SPF DKIM DMARC, sender authentication, email deliverability, bounce handling, email canonicalization,
+data retention, GDPR, PII, opaque token, signed token, JWT session, requestId, challenge id.

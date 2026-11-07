@@ -24,29 +24,40 @@ React/Vue/Svelte, native mobile). Accessibility notes included.
 
 ---
 
-## Screen 2 — Verify (6-box grid)
+## Screen 2 — Verify (code entry)
 
 - **Context line:** "Enter the 6-digit code we sent to **{email}**."
-- **6-box grid:** six side-by-side single-character inputs, `inputmode="numeric"`,
-  `maxlength="1"`, `pattern="[0-9]"`, `autocomplete="one-time-code"` (enables OTP autofill).
-  - **Auto-focus cascade:** typing a digit moves focus to the next box; backspace on an empty box moves
-    focus back.
+
+- **Code entry — two acceptable patterns:**
+
+  **Preferred:** a **single** field with `inputmode="numeric"` and `autocomplete="one-time-code"`.
+  This is the most accessible and works with OS/browser OTP autofill.
+
+  **Alternative (6-box grid):** six side-by-side single-character inputs. If you choose this:
+  - `inputmode="numeric"`, `maxlength="1"`, `pattern="[0-9]"`, `autocomplete="one-time-code"`.
+  - **Auto-focus cascade:** typing a digit moves focus to the next box; backspace on an empty box
+    moves focus back.
   - **Paste-to-fill:** pasting a 6-digit string fills all boxes and focuses the last.
   - One hidden combined input holds the full code for submission.
+  - Each box has an `aria-label` ("Digit 1" … "Digit 6") and the grid is grouped with a label.
+
 - **Persistent helper banner:** non-dismissing, info-styled: "Please check your inbox **and your
-  spam/junk folder**." Visible for the entire verification step.
+  spam/junk folder**." Visible for the entire verification step. Add: "Still nothing after ~60
+  seconds? You can request a new code."
+
 - **Resend + countdown:**
   - Show a 30-second countdown ("Resend code in 18s") with the resend button **disabled**.
-  - At zero, activate "Resend code".
+  - At zero, activate "Resend code". The 30s is a **floor** — a slow mailbox is not the user's fault.
   - The server enforces the cooldown independently; if the client is out of sync, the server's
     `retry_after` resets the countdown.
+
 - **Inline error:** an invalid/expired code shows an immediate inline message **without a page reload**
   (fetch/XHR and render the response, or client-side state update).
+
 - **Support link** at the base (same as Screen 1).
 - **Optional back link:** "Use a different email" returns to Screen 1.
 
 ### Accessibility
-- Each box has an `aria-label` ("Digit 1" … "Digit 6"); the grid is grouped with a label.
 - The countdown uses `aria-live="polite"`; the error container has `role="alert"`.
 - The banner uses `role="status"` so it is announced once without interrupting typing.
 - Target sizes are ≥ 44px for inputs and buttons.

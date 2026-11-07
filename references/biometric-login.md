@@ -92,6 +92,47 @@ App                          Server
 
 ---
 
+## Device lifecycle & revocation
+
+Enrollment is not "set once and forget". A complete implementation manages the device credential
+lifecycle:
+
+- **Cap devices per account** — allow a bounded number of enrolled devices (e.g. 5); reject or
+  replace the oldest beyond that.
+- **Track devices** — store `device_id`, a label ("Dave's iPhone"), `last_used_at`, and the public key
+  together so the user can see and manage them.
+- **Revoke a device** — deleting the server-side public key immediately disables that device; the
+  private key on the device is now useless for login.
+- **Re-enroll after revocation** — a revoked device must fall back to the email OTP and re-enroll.
+- **Rotate on suspicious activity** — invalidate a device's keys if the account shows compromise.
+
+These are the *account-security* half of biometric login; without revocation, a lost phone is a
+permanent backdoor.
+
+---
+
+## Identifier discovery on a fresh install
+
+Biometric login needs a user identifier before it can look up the public key, which reintroduces the
+enumeration question on a **fresh install** (no cached identity). Resolve it explicitly:
+
+- **Preferred:** the device is enrolled *during* an authenticated OTP session, and the app caches the
+  user id in secure storage (Keychain / EncryptedSharedPreferences) for subsequent biometric logins.
+- **If no cached id:** require the user to identify themselves first — re-enter the email (which goes
+  through the enumeration-safe OTP `request`), or sign in with OTP once and re-enroll.
+- **Never** build a "look up my account by Face ID alone" flow that the server answers with
+  account-specific data before authentication.
+
+---
+
+## Success feedback
+
+A biometric login that succeeds should feel like a win, not a silent state change. On success, briefly
+show the authenticated identity (avatar/email) and transition into the app; on repeated cancellation,
+offer the OTP fallback so the user is never trapped.
+
+---
+
 ## Platform specifics
 
 ### iOS (Swift)
