@@ -119,6 +119,7 @@ function verify_otp(request_id, code):
     delete challenge                       # consumed — clear transient state
 
     user = find_user(email)
+    is_new = (user == null)
     if user == null:
         if not AUTO_REGISTER:              # still generic — no enumeration leak
             return 422 { error: GENERIC_ERROR }
@@ -130,7 +131,12 @@ function verify_otp(request_id, code):
     establish_session(user)                # regenerate session id / issue short-lived signed token
     clear_transient_state(request_id)
 
-    return 200 { ok: true, redirect: "/dashboard" }
+    # First-time registration collected only an email — send them to complete
+    # their profile; returning users go straight to the dashboard.
+    redirect = is_new ? "/profile/edit" : "/dashboard"
+    response = { ok: true, redirect }
+    if is_new: response.flash = "Welcome! Complete your profile to get started."
+    return 200 response
 ```
 
 Where `GENERIC_ERROR = "The code is invalid or has expired."`

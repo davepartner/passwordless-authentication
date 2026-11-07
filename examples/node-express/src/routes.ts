@@ -11,7 +11,8 @@ import {
   matchesOrDummy,
 } from './otp.js';
 import { hit, tooMany } from './rateLimit.js';
-import { challengeStore, deviceStore, sessionStore, userStore } from './store.js';
+import { challengeStore, deviceStore, sessionStore } from './store.js';
+import { completeLogin } from './user.js';
 import { consumeChallenge, issueChallenge, verifySignature } from './biometric.js';
 
 const HOUR = 3600_000;
@@ -131,17 +132,16 @@ router.post('/auth/otp/verify', async (req, res) => {
   // Success.
   challengeStore.delete(requestId);
 
-  let user = userStore.get(email);
-  if (!user) {
-    user = { email, emailVerifiedAt: Date.now() };
-  } else {
-    user.emailVerifiedAt = Date.now();
-  }
-  userStore.put(email, user);
-
+  const { isNew, redirect, flash } = completeLogin(email);
   const token = sessionStore.create(email);
 
-  res.json({ ok: true, redirect: '/dashboard', sessionToken: token });
+  res.json({
+    ok: true,
+    redirect,
+    sessionToken: token,
+    isNewUser: isNew,
+    ...(flash ? { flash } : {}),
+  });
 });
 
 // POST /auth/otp/resend — refresh the SAME challenge after the cooldown.

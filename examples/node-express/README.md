@@ -15,7 +15,7 @@ npm test           # unit tests (otp + rate limiter)
 | Method | Path | Body | Auth | Notes |
 |--------|------|------|------|-------|
 | POST | `/auth/otp/request` | `{ email }` | — | issues + "emails" a code; uniform response (enumeration-safe) |
-| POST | `/auth/otp/verify` | `{ requestId, code }` | — | verifies, find-or-create user, returns a session token |
+| POST | `/auth/otp/verify` | `{ requestId, code }` | — | verifies, find-or-create user, returns a session token + redirect (new users → `/profile/edit` with a welcome flash) |
 | POST | `/auth/otp/resend` | `{ requestId }` | — | refreshes the same challenge after the 30s cooldown |
 | POST | `/auth/logout` | — | Bearer | destroys the session |
 | POST | `/auth/biometric/enroll` | `{ publicKey, deviceId, label }` | **Bearer** | store a device public key (authenticated) |

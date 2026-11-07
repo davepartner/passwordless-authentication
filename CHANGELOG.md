@@ -6,6 +6,8 @@ All notable changes to this skill. Pin by tag/commit when consuming.
 
 ### Changes
 - **OTP length raised to 8 digits** (default) for higher assurance.
+- **First-login profile completion** — a brand-new registration is redirected to profile edit with a
+  welcome flash message (registration only collects email).
 
 ### Security fixes (from the initial review)
 - **Challenges are now keyed by `requestId` (not email).** Requesting a code for an email no longer

@@ -58,7 +58,9 @@ email ──▶ POST /auth/otp/request ──▶ issue code, create challenge (i
    whether or not the address is registered**.
 2. **Verify** — the user enters the code. The backend looks up the challenge **by `requestId`**, checks
    it in **constant time**, enforces expiry + attempt limits, then signs the user in (or registers them).
-3. **Success** — establish the session, clear transient state, redirect to the app.
+3. **Success** — establish the session, clear transient state, and redirect. **Returning** users go
+   to the dashboard; a **first-time** registration (email-only) goes to a profile-edit page with a
+   flash message so the account can be completed.
 
 ---
 

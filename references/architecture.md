@@ -91,7 +91,9 @@ per-IP), so this does not enable unbounded code issuance.
 - **Server steps:** load challenge by `requestId` → rate-limit (verify, failures only) → constant-time
   compare (dummy hash when absent) → check expiry, attempts → on success: find-or-create user, mark
   verified, establish session, regenerate session id, clear state, consume the challenge.
-- **Out success:** `{ "ok": true, "redirect": "/dashboard" }`.
+- **Out success:** `{ "ok": true, "redirect": "/dashboard", "isNewUser": false }`. For a
+  **first-time** registration the server returns `redirect: "/profile/edit"` plus a `flash` message
+  ("Welcome! Complete your profile to get started.") so the email-only account can be completed.
 - **Out failure:** one generic message: `{ "ok": false, "error": "The code is invalid or has expired." }`.
 
 ### `POST /auth/otp/resend`
@@ -144,3 +146,4 @@ otp_challenges
 | Mail send fails | Never reveal account state; return a controlled error (log server-side). |
 | Mail bounces (NDR) | Handle bounces without surfacing/logging a distinct "no such user" (enumeration leak). |
 | Concurrent requests | Each request gets its own challenge id; no cross-invalidation. |
+| First-time login (new account) | Redirect to profile edit with a flash message; returning users go to the dashboard. |

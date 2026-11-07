@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "start": "tsx src/server.ts",
-    "test": "tsx --test src/otp.test.ts src/rateLimit.test.ts"
+    "test": "tsx --test src/otp.test.ts src/rateLimit.test.ts src/user.test.ts"
   },
   "dependencies": {
     "bcrypt": "^5.1.1",

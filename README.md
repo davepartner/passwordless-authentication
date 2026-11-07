@@ -52,6 +52,7 @@ tickets. Passwordless OTP auth removes the thing attackers steal (the password) 
 |------|-------------------|
 | **Single email field** | One clean input for both login and registration (auto-register on first code). |
 | **Email-only registration** | Sign-up is the same single email field — no name, no password; the account is created on the first successful code. |
+| **First-login profile completion** | Since registration collects only email, a first-time login is sent to a profile-edit page with a "complete your profile" flash message. |
 | **Anti-enumeration** | The request endpoint never queries the account store; identical response either way. |
 | **Dynamic button** | Client-side email regex enables the submit button the moment the address is valid. |
 | **Code entry** | Single `one-time-code` field (preferred) or an 8-box grid with auto-focus and paste-to-fill. |
