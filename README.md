@@ -134,8 +134,10 @@ A full **threat model** — what each control defends against and why — is in
 
 - **OTP is still phishable.** A real-time relay can proxy a code as easily as a password. For
   high-value targets, prefer WebAuthn/passkeys.
-- **8-digit codes are still low-entropy** (10⁸) relative to a password. Safe only because of expiry +
-  attempt limits + rate limiting; raise to 10 digits for higher assurance.
+- **8-digit codes (10⁸ ≈ 100M combinations) are effectively unguessable online** once expiry, attempt
+  limits, and rate limiting apply — but remain far weaker than a password against offline cracking of
+  a leaked hash (bcrypt/argon2id mitigates this). Raise to 10 digits for extra margin on high-value
+  accounts.
 - **Depends on email deliverability.** "Never fails" assumes SPF/DKIM/DMARC and a healthy sending
   domain. If the code lands in spam, the flow stalls.
 - **Unified entry trades off email bombing.** It must send to any address to avoid enumeration; the
