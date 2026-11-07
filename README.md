@@ -13,6 +13,20 @@ whatever stack you already use. A language-neutral pseudocode reference is inclu
 
 ---
 
+## Who this is for
+
+This is for teams building apps that need **simple, straightforward, high-fidelity authentication** —
+email + a one-time code, nothing more. The entire system is engineered around one promise:
+
+> **Authentication stays simple, and it never fails.**
+
+That means a single field to sign in *or* sign up, a clear code step that tells the user exactly what
+to do next, a **contact button** on every auth page when someone gets stuck, and **flash messages**
+that confirm each action ("check your inbox and spam folder", "a new code has been sent"). No
+passwords to forget, no confusing multi-page signup — just email in, code in, you're in.
+
+---
+
 ## Why passwordless
 
 Passwords are the single biggest source of account takeover, credential-stuffing, and support
@@ -31,15 +45,16 @@ tickets. Passwordless OTP auth removes the thing attackers steal (the password) 
 | Area | What it specifies |
 |------|-------------------|
 | **Single email field** | One clean input for both login and registration (auto-register on first code). |
+| **Email-only registration** | Sign-up is the same single email field — no name, no password; the account is created on the first successful code. |
 | **Anti-enumeration** | The request endpoint never queries the account store; identical response either way. |
 | **Dynamic button** | Client-side email regex enables the submit button the moment the address is valid. |
 | **Code entry** | Single `one-time-code` field (preferred) or a 6-box grid with auto-focus and paste-to-fill. |
-| **Persistent helper banner** | "Check your inbox and spam/junk folder" stays visible throughout verification. |
+| **Flash messages (action guidance)** | Persistent, non-dismissing messages that tell the user exactly what to do — "check your inbox and spam folder", "a new code has been sent". |
 | **Server-synced resend** | 30-second countdown; server independently enforces the cooldown + rate limits. |
 | **Immediate inline errors** | Wrong/expired code shows an inline message, no page reload. |
 | **Hashed OTPs** | Codes stored as bcrypt/argon2id hashes, compared in constant time, auto-expiring. |
 | **Hardened session** | Session regeneration on login, CSRF protection, transient state cleared. |
-| **Support link** | "Trouble logging in? Contact admin" on both forms. |
+| **Contact button** | A "Trouble logging in? Contact admin" button on every auth page, so a user is never stuck. |
 | **Face ID / biometric login** | Optional mobile re-auth: a device-bound key (Secure Enclave / Android Keystore) signs a server challenge, with device limits and revocation. |
 
 ---
@@ -77,22 +92,25 @@ redirect → /dashboard
 
 ---
 
-## Security model
+## Security measures
 
-- **No early disclosure** — `request` returns the identical response for registered and unregistered
-  emails. Account creation/lookup happens only at code verification.
-- **Hashed codes** — OTPs stored as `bcrypt` (cost ≥ 10) or `argon2id`, generated with a CSPRNG.
-- **Constant-time compare** — the hash verify runs even when no challenge exists (dummy hash), so
-  timing can't reveal whether an OTP was issued.
-- **Rate limiting** — send limited per-email and per-IP; verify limited per-email (**failures only**);
-  hard 30s resend cooldown. The client timer is UX only; the server is authoritative.
-- **Session hardening** — session-id regeneration on login, `Secure`+`HttpOnly`+`SameSite` cookies or
-  short-lived signed tokens, CSRF everywhere, transient state cleared.
-- **Email-verified on OTP** — proving the code marks the address verified.
+Every one of these is enforced by the spec and demonstrated in `examples/node-express/`:
 
-A full **threat model** — what each control defends against — is in `references/security-rules.md`,
-along with sender-auth (SPF/DKIM/DMARC), bounce-handling, retention/PII, and email-canonicalization
-guidance.
+| Measure | What it stops |
+|---------|---------------|
+| **No early account disclosure** | User enumeration — the server never reveals whether an email is registered. |
+| **Hashed OTPs** (bcrypt/argon2id, CSPRNG) | Database theft — the raw code is never stored or logged. |
+| **Constant-time comparison** | Timing side-channels that reveal whether a code was issued. |
+| **Expiry + attempt limits** | Brute force — codes expire (10 min) and lock after 5 wrong guesses. |
+| **Rate limiting** (per-email, per-IP, 30s resend cooldown) | Email bombing and code guessing. |
+| **Session regeneration + CSRF** | Session fixation and cross-site request forgery. |
+| **Email-verified on OTP** | Unverified accounts — proving the code proves the inbox. |
+| **Authenticated biometric enrollment** | Key injection — only a signed-in user can enroll a device. |
+| **Sender auth (SPF/DKIM/DMARC) + bounce safety** | Deliverability failure and bounce-based enumeration. |
+| **Retention & PII controls** | Stale data growth and GDPR/CCPA exposure. |
+
+A full **threat model** — what each control defends against and why — is in
+`references/security-rules.md`.
 
 > **Production notes:** serve over HTTPS, use a queue-capable mail provider, and back the rate
 > limiter with a shared store (Redis, etc.) so limits hold across instances.
@@ -111,6 +129,28 @@ For native iOS/Android apps, add a one-tap unlock on top of the email OTP:
 
 See `references/biometric-login.md` for the full architecture, and `examples/` for concrete Swift
 (iOS) and Kotlin (Android) code plus the server-side verification.
+
+---
+
+## Pull it & start using
+
+Copy this prompt into your agent (Claude Code, Codex, Cursor, OpenCode, …) to install the skill and
+build the flow in your stack:
+
+```
+Pull the passwordless-authentication skill from
+https://github.com/davepartner/passwordless-authentication (pin it by tag or commit), read SKILL.md,
+and implement email-OTP login for this project following its spec exactly:
+
+- One email field for both login and signup (auto-register on first code) — no password, no name field.
+- A 6-digit code step with a persistent "check your inbox and spam folder" flash message and a 30s
+  server-synced resend countdown.
+- A "Trouble logging in? Contact admin" button on every auth page, and inline errors with no reload.
+- The full security rules: hashed OTPs (bcrypt/argon2id), constant-time compare, expiry + attempt
+  limits, per-email/per-IP rate limiting, session regeneration, and zero account enumeration.
+
+Then run the skill's verification checklist before you consider the work done.
+```
 
 ---
 
