@@ -1,18 +1,12 @@
-# Dependencies
+# Dependencies (if a reference implementation is generated locally)
 /vendor/
 /node_modules/
+/venv/
 
 # Environment / secrets
 .env
 .env.*
 !.env.example
-
-# Framework caches
-storage/*.key
-bootstrap/cache/*
-.phpunit.result.cache
-composer.lock
-package-lock.json
 
 # OS / editor
 .DS_Store
