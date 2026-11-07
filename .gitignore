@@ -1,0 +1,21 @@
+# Dependencies
+/vendor/
+/node_modules/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Framework caches
+storage/*.key
+bootstrap/cache/*
+.phpunit.result.cache
+composer.lock
+package-lock.json
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
