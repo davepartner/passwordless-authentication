@@ -63,6 +63,7 @@ tickets. Passwordless OTP auth removes the thing attackers steal (the password) 
 | **Hardened session** | Session regeneration on login, CSRF protection, transient state cleared. |
 | **Contact button** | A "Trouble logging in? Contact admin" button on every auth page, so a user is never stuck. |
 | **Face ID / biometric login** | Optional mobile re-auth: a device-bound key (Secure Enclave / Android Keystore) signs a server challenge, with device limits and revocation. |
+| **Social login** | "Continue with Google / GitHub / LinkedIn" via OAuth/OIDC — verified-email-only account linking, no takeover. |
 
 ---
 
@@ -75,7 +76,8 @@ references/
 ├── security-rules.md                 # Security invariants with exact algorithms + primitives
 ├── ux-rules.md                       # UX behaviours with accessibility notes
 ├── reference-implementation.md       # Language-neutral pseudocode to translate into any stack
-└── biometric-login.md                # Face ID / Touch ID login architecture for mobile
+├── biometric-login.md                # Face ID / Touch ID login architecture for mobile
+└── social-login.md                   # OAuth/OIDC social login (Google, GitHub, LinkedIn)
 examples/
 ├── node-express/                     # TypeScript/Express backend (OTP + biometric server side) + unit tests
 ├── ios-faceid/                       # Swift Face ID client
@@ -170,6 +172,20 @@ See `references/biometric-login.md` for the full architecture, and `examples/` f
 
 ---
 
+## Social login (Google, GitHub, LinkedIn, …)
+
+Add "Continue with Google / GitHub / LinkedIn" alongside email OTP and Face ID:
+
+- **OAuth 2.0 / OpenID Connect** with Authorization Code + PKCE — the provider authenticates, your app
+  verifies server-side, then maps the identity to a local account.
+- **Verified-email-only linking** — never link an account on an unverified email (account-takeover guard).
+- First-time social accounts reuse the **profile-completion** flow.
+- Provider matrix (Google, LinkedIn, Apple, Microsoft = OIDC; GitHub = OAuth2 + `/user/emails`) and the
+  account-linking decision are in `references/social-login.md`, with code + tests in
+  `examples/node-express/src/social.ts`.
+
+---
+
 ## Pull it & start using
 
 Copy this prompt into your agent (Claude Code, Codex, Cursor, OpenCode, …) to install the skill and
@@ -235,6 +251,12 @@ sign in with fingerprint, sign in with biometrics, fingerprint login, device rev
 lifecycle, phishing resistant, phishing resistance, OTP phishing, threat model, threat modeling,
 SPF DKIM DMARC, sender authentication, email deliverability, bounce handling, email canonicalization,
 data retention, GDPR, PII, opaque token, signed token, JWT session, requestId, challenge id.
+
+Social login, social sign in, sign in with Google, sign in with GitHub, sign in with LinkedIn, Google
+OAuth, GitHub OAuth, LinkedIn OAuth, OAuth 2.0, OpenID Connect, OIDC, OAuth login, social
+authentication, continue with Google, continue with GitHub, authorization code flow, PKCE, code
+challenge, ID token, JWKS, jwtVerify, jose, account linking, account takeover prevention, verified
+email, email_verified, provider user id, OAuth callback, social identity.
 
 Simple authentication, straightforward authentication, high-fidelity authentication, reliable
 authentication, authentication that never fails, email-only signup, email-only registration, no

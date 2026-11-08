@@ -22,6 +22,8 @@ npm test           # unit tests (otp + rate limiter)
 | POST | `/auth/biometric/revoke` | `{ deviceId }` | **Bearer** | remove a device public key |
 | POST | `/auth/biometric/challenge` | `{ email }` | — | always returns a fresh challenge (enumeration-safe) |
 | POST | `/auth/biometric/verify` | `{ email, challengeId, signature }` | — | verifies the signature → session |
+| GET | `/auth/social/:provider` | — | — | starts OAuth (Google/GitHub/LinkedIn); redirects to the provider |
+| GET | `/auth/social/:provider/callback` | `?code&state` | — | verifies the ID token / fetches profile, then reconciles via `decideAccountAction` |
 
 ## What is intentionally simplified
 

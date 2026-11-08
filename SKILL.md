@@ -2,18 +2,19 @@
 name: passwordless-authentication
 description: >-
   Build a secure, enumeration-resistant passwordless email OTP sign-in — single email field, 8-digit
-  code, resend cooldown — for any backend, plus optional Face ID / Touch ID biometric login for mobile
-  (Secure Enclave / Android Keystore challenge-response). Use when adding email-OTP or one-time-code
-  login, or mobile biometric re-auth. Triggers: "passwordless login", "email OTP", "one-time code
-  login", "OTP authentication", "biometric login", "Face ID login", "magic link alternative".
+  code, resend cooldown — for any backend, plus optional social login (Google, GitHub, LinkedIn, …)
+  and Face ID / Touch ID biometric login for mobile. Use when adding email-OTP or one-time-code login,
+  social/OAuth sign-in, or mobile biometric re-auth. Triggers: "passwordless login", "email OTP",
+  "one-time code login", "OTP authentication", "social login", "OAuth login", "OpenID Connect",
+  "sign in with Google", "GitHub login", "LinkedIn login", "biometric login", "Face ID login".
 ---
 
 # Passwordless Email OTP Authentication — Platform-Agnostic Skill
 
 Add frictionless passwordless sign-in to any application. Users enter **one email**, receive an
 **8-digit one-time code**, and are signed in (or auto-registered) with no password and no exposed
-"does this email exist?" signal. For native mobile apps, add an optional **Face ID / Touch ID**
-one-tap re-auth on top.
+"does this email exist?" signal. Add optional **social login** ("Continue with Google / GitHub /
+LinkedIn") and, for native mobile apps, **Face ID / Touch ID** one-tap re-auth on top.
 
 This skill is **framework- and language-agnostic**: it specifies the *what* and the *why* — the flow,
 the API contract, the data model, the security invariants, and the UX behaviours — and leaves the
@@ -37,6 +38,8 @@ What this system defends against, and how:
 | Session fixation | Session-id regeneration on login |
 | Biometric key extraction | Private key in Secure Enclave / Android Keystore, never exported |
 | Biometric signature replay | Single-use, expiring challenge nonce |
+| Social ID-token forgery | Server-side ID-token verification (JWKS, iss/aud/exp/nonce) |
+| Social account takeover via linking | Link only on provider `sub` or a *verified* email — never an unverified email |
 
 **Explicit non-goal:** OTP codes are **phishable** (a real-time relay can proxy a code as easily as a
 password). For high-assurance or high-value targets, use **WebAuthn / passkeys** instead. The
@@ -201,6 +204,22 @@ Full architecture, flows, and platform specifics: `references/biometric-login.md
 
 ---
 
+## Social login (Google, GitHub, LinkedIn, …)
+
+Add **"Continue with Google / GitHub / LinkedIn"** to the same system:
+
+- **Principle:** the provider authenticates the user; your app verifies the assertion **server-side**
+  (ID token via JWKS, or the profile via the provider's API) and then creates or links a local account.
+- **Authorization Code + PKCE** — never implicit flow, never trust a client-forwarded token.
+- **Only link on a *verified* email** (or the provider's `sub`) — an unverified email must never take
+  over an existing account.
+- A first-time social account reuses the same **profile-completion** flow as email OTP.
+
+Full architecture, provider matrix, and account-linking rules: `references/social-login.md`. Reference
+code: `examples/node-express/src/social.ts` (+ `social.test.ts`).
+
+---
+
 ## When NOT to use this
 
 - **High-assurance / financial / enterprise SSO** where OTP is too phishable — use WebAuthn/passkeys.
@@ -249,6 +268,8 @@ the verification checklist after updating. See `CHANGELOG.md` for what changed b
 - [ ] SPF/DKIM/DMARC configured; bounce handling does not leak existence; retention/GC scheduled.
 - [ ] The "check inbox and spam" banner and the support link are present on both forms.
 - [ ] Email is marked verified when the code is proven.
+- [ ] Social login uses Authorization Code + PKCE; ID token verified server-side (JWKS, iss/aud/exp/nonce).
+- [ ] Social account linking only on provider `sub` or a *verified* email — never an unverified email.
 
 ---
 
@@ -259,4 +280,5 @@ the verification checklist after updating. See `CHANGELOG.md` for what changed b
 - `references/ux-rules.md` — the UX behaviours with accessibility notes.
 - `references/reference-implementation.md` — neutral pseudocode to translate into any stack.
 - `references/biometric-login.md` — Face ID / Touch ID architecture, flows, device lifecycle.
+- `references/social-login.md` — OAuth/OIDC social login (Google, GitHub, LinkedIn), account linking.
 - `examples/` — concrete reference implementations (Node/Express, iOS, Android).

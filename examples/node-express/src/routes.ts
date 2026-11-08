@@ -14,6 +14,16 @@ import { hit, tooMany } from './rateLimit.js';
 import { challengeStore, deviceStore, sessionStore } from './store.js';
 import { completeLogin } from './user.js';
 import { consumeChallenge, issueChallenge, verifySignature } from './biometric.js';
+import {
+  buildAuthorizeUrl,
+  codeChallengeFromVerifier,
+  decideAccountAction,
+  generateCodeVerifier,
+  generateNonce,
+  resolveSocialCallback,
+  socialStateStore,
+  type SocialProvider,
+} from './social.js';
 
 const HOUR = 3600_000;
 const FIFTEEN_MIN = 15 * 60_000;
@@ -258,6 +268,71 @@ router.post('/auth/biometric/verify', (req, res) => {
 
   const token = sessionStore.create(email);
   res.json({ ok: true, redirect: '/dashboard', sessionToken: token });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Social login (OAuth 2.0 / OpenID Connect)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// GET /auth/social/:provider — start the OAuth flow.
+router.get('/auth/social/:provider', (req, res) => {
+  const provider = req.params.provider as SocialProvider; // production: validate against an allowlist
+  const clientId = process.env[`SOCIAL_${provider.toUpperCase()}_CLIENT_ID`] ?? '';
+  const redirectUri = `${process.env.APP_URL ?? 'http://localhost:3000'}/auth/social/${provider}/callback`;
+
+  if (!clientId) {
+    res.status(500).send(`${provider} client id not configured`);
+    return;
+  }
+
+  const state = randomBytes(16).toString('hex');
+  const nonce = provider === 'github' ? undefined : generateNonce();
+  const codeVerifier = generateCodeVerifier();
+
+  socialStateStore.set(state, { provider, nonce, codeVerifier, createdAt: Date.now() });
+
+  const url = buildAuthorizeUrl(provider, clientId, redirectUri, {
+    state,
+    codeChallenge: codeChallengeFromVerifier(codeVerifier),
+    nonce,
+  });
+  res.redirect(url);
+});
+
+// GET /auth/social/:provider/callback — handle the provider's redirect.
+router.get('/auth/social/:provider/callback', async (req, res) => {
+  const provider = req.params.provider as SocialProvider;
+  const code = String(req.query.code ?? '');
+  const state = String(req.query.state ?? '');
+
+  const pending = socialStateStore.get(state);
+  if (!pending || pending.provider !== provider) {
+    res.status(400).send('Invalid state');
+    return;
+  }
+  socialStateStore.delete(state);
+
+  const clientId = process.env[`SOCIAL_${provider.toUpperCase()}_CLIENT_ID`] ?? '';
+  const clientSecret = process.env[`SOCIAL_${provider.toUpperCase()}_CLIENT_SECRET`] ?? '';
+  const redirectUri = `${process.env.APP_URL ?? 'http://localhost:3000'}/auth/social/${provider}/callback`;
+
+  const identity = await resolveSocialCallback(code, {
+    provider,
+    clientId,
+    clientSecret,
+    redirectUri,
+    nonce: pending.nonce,
+    codeVerifier: pending.codeVerifier,
+  });
+
+  // Reconcile with the local store. In production: look up an existing account
+  // by verified email and by (provider, provider_user_id), then decideAccountAction,
+  // persist the link, and establish the session (first login → /profile/edit).
+  const action = decideAccountAction(identity, false, false);
+
+  res.json({ ok: true, identity, action });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
