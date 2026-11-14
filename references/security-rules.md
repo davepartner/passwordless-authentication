@@ -151,6 +151,34 @@ timestamp on first successful verification. No separate confirmation step.
 
 ---
 
+## 10. Consent integrity (Terms + Privacy)
+
+**Rule:** a registration is only valid when the user has accepted both documents, and the record must
+show *what* they accepted.
+
+- **Server-authoritative.** The boxes are pre-checked in the UI; the server still requires an explicit
+  `true` on `request` and returns `422` otherwise. Never infer acceptance from the absence of a value,
+  and never accept `"false"`, `0`, `"yes"`, or a missing key.
+- **Before delivery.** Consent is validated *before* rate limiting and code generation, so a rejected
+  request sends no mail and consumes no send budget.
+- **Implicit registration, explicit record.** Because `request` cannot look up the account, acceptance
+  rides on the challenge and is persisted only when the account is created at `verify`. Do not create
+  user rows at request time to store it.
+- **Version + timestamp, not a boolean.** Store `terms_version` / `terms_accepted_at` and
+  `privacy_version` / `privacy_accepted_at`. A boolean cannot survive a text change.
+- **Preserve history.** Re-accepting the same version must not overwrite the original timestamp; only
+  a version change stamps a new one. Keep an append-only consent log if you need to evidence older
+  acceptances.
+- **Retention exception.** Consent records are evidence — exclude them from the OTP purge job and tie
+  them to account retention instead.
+- **Do not confuse the two consents.** Contract acceptance (these boxes) is not the same as consent
+  for optional processing (marketing, analytics, cookies). The latter must be separate, unchecked, and
+  withdrawable.
+
+See `legal-consent.md` for the UI placement, versioning flow, and document contents.
+
+---
+
 ## Operational rules (not optional)
 
 ### Sender auth & deliverability
@@ -180,3 +208,5 @@ timestamp on first successful verification. No separate confirmation step.
 - [ ] Biometric enrollment requires authentication.
 - [ ] SPF/DKIM/DMARC configured; bounce handling does not leak existence; retention scheduled.
 - [ ] Email marked verified on code proof.
+- [ ] Consent required server-side; 422 and no mail when either acceptance is missing.
+- [ ] Accepted document versions + timestamps stored; original accept time preserved across logins.

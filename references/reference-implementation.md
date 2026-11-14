@@ -17,6 +17,8 @@ SEND_LIMIT_EMAIL = 10 per hour
 SEND_LIMIT_IP    = 20 per hour
 VERIFY_LIMIT     = 10 per 15 minutes   # counts FAILURES only
 DUMMY_HASH       = <a valid bcrypt/argon2 hash of a fixed random string, precomputed>
+TERMS_VERSION    = "1.0.0"            # bump on material change; re-prompt at verify
+PRIVACY_VERSION  = "1.0.0"
 ```
 
 ---
@@ -42,11 +44,17 @@ function code_matches(code, hash):
 ## Request OTP
 
 ```
-function request_otp(email, ip):
+function request_otp(email, ip, accepted_terms, accepted_privacy):
     email = normalize(email)            # lowercase + trim + canonicalization policy
 
     if not is_valid_email(email):
         return 422 { field_error: "email" }     # syntax only — no account check
+
+    # Consent first: no code is generated or sent without an explicit acceptance.
+    # Pre-checked boxes in the UI are NOT consent — require the value to be true.
+    if not is_affirmative(accepted_terms) or not is_affirmative(accepted_privacy):
+        return 422 { field: "consent",
+                     error: "Please accept the Terms of Service and Privacy Policy to continue." }
 
     if rate_limited("send:email:" + email, SEND_LIMIT_EMAIL, 1_hour):
         return 429 { retry_after: remaining_seconds }
@@ -59,12 +67,17 @@ function request_otp(email, ip):
     request_id = random_opaque_id()
 
     store challenge {
-        id:         request_id,          # the requestId
-        email:      email,
-        code_hash:  hash_code(code),
-        expires_at: now + OTP_LIFETIME,
-        attempts:   0,
-        ip_address: ip,
+        id:                 request_id,          # the requestId
+        email:              email,
+        code_hash:          hash_code(code),
+        expires_at:         now + OTP_LIFETIME,
+        attempts:           0,
+        ip_address:         ip,
+        # Consent travels on the challenge; it is persisted only on account creation.
+        terms_version:      TERMS_VERSION,
+        terms_accepted_at:  now,
+        privacy_version:    PRIVACY_VERSION,
+        privacy_accepted_at: now,
     }
     # NOTE: do NOT delete other challenges for this email (that would allow a
     # login DoS). Co-existing challenges are bounded by the send rate limits.
@@ -126,6 +139,7 @@ function verify_otp(request_id, code):
         user = create_user(email)          # name derived from email; unusable random password
 
     user.email_verified_at = now
+    user = record_consent(user, challenge)     # see below
     save user
 
     establish_session(user)                # regenerate session id / issue short-lived signed token
@@ -136,7 +150,26 @@ function verify_otp(request_id, code):
     redirect = is_new ? "/profile/edit" : "/dashboard"
     response = { ok: true, redirect }
     if is_new: response.flash = "Welcome! Complete your profile to get started."
+    if consent_is_stale(user): response.requiresConsent = true
     return 200 response
+```
+
+```
+function record_consent(user, challenge):
+    # A pre-existing acceptance of the same version keeps its original timestamp;
+    # a version change stamps the new acceptance time.
+    if user.terms_version != challenge.terms_version:
+        user.terms_version      = challenge.terms_version
+        user.terms_accepted_at  = challenge.terms_accepted_at
+    if user.privacy_version != challenge.privacy_version:
+        user.privacy_version    = challenge.privacy_version
+        user.privacy_accepted_at = challenge.privacy_accepted_at
+    if CONSENT_LOG_ENABLED:
+        append consent_event { email, terms_version, privacy_version, accepted_at, ip, user_agent }
+    return user
+
+function consent_is_stale(user):
+    return user.terms_version != TERMS_VERSION or user.privacy_version != PRIVACY_VERSION
 ```
 
 Where `GENERIC_ERROR = "The code is invalid or has expired."`

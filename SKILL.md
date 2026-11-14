@@ -2,19 +2,22 @@
 name: passwordless-authentication
 description: >-
   Build a secure, enumeration-resistant passwordless email OTP sign-in — single email field, 8-digit
-  code, resend cooldown — for any backend, plus optional social login (Google, GitHub, LinkedIn, …)
-  and Face ID / Touch ID biometric login for mobile. Use when adding email-OTP or one-time-code login,
-  social/OAuth sign-in, or mobile biometric re-auth. Triggers: "passwordless login", "email OTP",
-  "one-time code login", "OTP authentication", "social login", "OAuth login", "OpenID Connect",
-  "sign in with Google", "GitHub login", "LinkedIn login", "biometric login", "Face ID login".
+  code, resend cooldown — for any backend, plus optional social login (Google, GitHub, LinkedIn, …),
+  Face ID / Touch ID biometric login for mobile, and Terms of Service + Privacy Policy acceptance at
+  registration. Use when adding email-OTP or one-time-code login, social/OAuth sign-in, mobile
+  biometric re-auth, or legal consent checkboxes with real policy pages. Triggers: "passwordless
+  login", "email OTP", "one-time code login", "OTP authentication", "social login", "OAuth login",
+  "OpenID Connect", "sign in with Google", "GitHub login", "LinkedIn login", "biometric login",
+  "Face ID login", "terms of service checkbox", "privacy policy checkbox", "consent at signup".
 ---
 
 # Passwordless Email OTP Authentication — Platform-Agnostic Skill
 
-Add frictionless passwordless sign-in to any application. Users enter **one email**, receive an
-**8-digit one-time code**, and are signed in (or auto-registered) with no password and no exposed
-"does this email exist?" signal. Add optional **social login** ("Continue with Google / GitHub /
-LinkedIn") and, for native mobile apps, **Face ID / Touch ID** one-tap re-auth on top.
+Add frictionless passwordless sign-in to any application. Users enter **one email**, accept the
+**Terms of Service** and **Privacy Policy**, receive an **8-digit one-time code**, and are signed in
+(or auto-registered) with no password and no exposed "does this email exist?" signal. Add optional
+**social login** ("Continue with Google / GitHub / LinkedIn") and, for native mobile apps,
+**Face ID / Touch ID** one-tap re-auth on top.
 
 This skill is **framework- and language-agnostic**: it specifies the *what* and the *why* — the flow,
 the API contract, the data model, the security invariants, and the UX behaviours — and leaves the
@@ -40,6 +43,7 @@ What this system defends against, and how:
 | Biometric signature replay | Single-use, expiring challenge nonce |
 | Social ID-token forgery | Server-side ID-token verification (JWKS, iss/aud/exp/nonce) |
 | Social account takeover via linking | Link only on provider `sub` or a *verified* email — never an unverified email |
+| Unconsented registration | Server-side validation of explicit Terms/Privacy acceptance; version + timestamp recorded |
 
 **Explicit non-goal:** OTP codes are **phishable** (a real-time relay can proxy a code as easily as a
 password). For high-assurance or high-value targets, use **WebAuthn / passkeys** instead. The
@@ -51,19 +55,25 @@ fallback.
 ## The flow
 
 ```
-email ──▶ POST /auth/otp/request ──▶ issue code, create challenge (id = requestId), email it (NO user lookup)
+email + accept Terms/Privacy ──▶ POST /auth/otp/request ──▶ issue code, create challenge (id = requestId), email it
+                                                             (NO user lookup)
                                         └─▶ verify view (code entry, countdown, "check spam" banner)
-                                               └─▶ POST /auth/otp/verify { requestId, code } ──▶ verify → find-or-create user → login
+                                               └─▶ POST /auth/otp/verify { requestId, code } ──▶ verify → find-or-create user
+                                                                                                (persist consent) → login
 ```
 
-1. **Request** — the user submits a single email. The backend validates format, rate-limits, generates
-   a code, stores it **hashed**, emails it, and returns a `requestId` plus an **identical response
-   whether or not the address is registered**.
+1. **Request** — the user submits a single email and the two acceptance checkboxes (both rendered
+   **pre-checked**). The backend validates format and consent, rate-limits, generates a code, stores
+   it **hashed**, emails it, and returns a `requestId` plus an **identical response whether or not the
+   address is registered**. No code is sent unless both boxes were accepted.
 2. **Verify** — the user enters the code. The backend looks up the challenge **by `requestId`**, checks
-   it in **constant time**, enforces expiry + attempt limits, then signs the user in (or registers them).
+   it in **constant time**, enforces expiry + attempt limits, then signs the user in (or registers
+   them), persisting the accepted Terms/Privacy versions onto the new account.
 3. **Success** — establish the session, clear transient state, and redirect. **Returning** users go
    to the dashboard; a **first-time** registration (email-only) goes to a profile-edit page with a
-   flash message so the account can be completed.
+   flash message so the account can be completed. If the published Terms or Privacy version has
+   changed since the user last agreed, the response flags `requiresConsent` and the client re-presents
+   the acceptance step.
 
 ---
 
@@ -74,7 +84,13 @@ Path names are illustrative — keep the shapes and semantics.
 ### `POST /auth/otp/request`
 ```jsonc
 // request
-{ "email": "user@example.com" }
+{ "email": "user@example.com",
+  "acceptedTerms": true,      // required — explicit true (or form value "on"/"true")
+  "acceptedPrivacy": true }   // required — explicit true
+
+// rejected, before any mail is sent
+{ "ok": false, "error": "Please accept the Terms of Service and Privacy Policy to continue.",
+  "field": "consent" }        // HTTP 422
 
 // response — ALWAYS identical, whether or not the account exists
 { "ok": true, "requestId": "<opaque id>", "resend_after": 30,
@@ -86,8 +102,10 @@ Path names are illustrative — keep the shapes and semantics.
 // request — the requestId binds this attempt to the issued challenge
 { "requestId": "<opaque id>", "code": "12345678" }
 
-// success
+// success — consent was just persisted onto the account
 { "ok": true, "redirect": "/dashboard" }
+// success, when the published versions moved on since the user last agreed
+{ "ok": true, "redirect": "/dashboard", "requiresConsent": true }
 
 // failure — one generic message for invalid, expired, and unknown
 { "ok": false, "error": "The code is invalid or has expired." }
@@ -108,7 +126,7 @@ Path names are illustrative — keep the shapes and semantics.
 
 ---
 
-## Data model (one table / collection)
+## Data model
 
 ```
 otp_challenges
@@ -119,13 +137,21 @@ otp_challenges
   attempts      integer (default 0)
   consumed_at   timestamp (nullable)
   ip_address    optional, for audit + limits (PII — see retention note)
+  terms_version / terms_accepted_at         acceptance captured at request time
+  privacy_version / privacy_accepted_at
   created_at    timestamp
+
+users
+  email, email_verified_at
+  terms_version / terms_accepted_at         persisted when the account is created
+  privacy_version / privacy_accepted_at
 ```
 
 **Keyed by `id` (requestId), not by email.** Requesting a code for an email the attacker does not
 control **does not** invalidate that user's in-flight challenge (no login-DoS). The number of
 co-existing challenges is bounded by the send rate limits. Purge expired/consumed rows on a schedule
-(see security rules).
+(see security rules) — but **not** the consent record, which is evidence and follows account
+retention instead.
 
 ---
 
@@ -148,6 +174,9 @@ co-existing challenges is bounded by the send rate limits. Purge expired/consume
 8. **Session hardening** — regenerate the session id on login; `Secure` + `HttpOnly` + `SameSite`
    cookies (or short-lived signed tokens); CSRF protection; clear transient challenge state.
 9. **Email verified on OTP** — proving the code marks the address verified.
+10. **Consent is validated server-side** — never trust the client's pre-checked default. Reject the
+    request unless both acceptance flags are explicitly true, and store the accepted **version** and
+    **timestamp**, not a boolean. Never send a code for a request that did not accept them.
 
 **Operational rules (equally important):**
 
@@ -182,6 +211,35 @@ co-existing challenges is bounded by the send rate limits. Purge expired/consume
 6. **Immediate inline errors** — invalid/expired code shows an inline message with **no page reload**.
 7. **Support link** — "Trouble logging in? Contact admin" at the base of both forms.
 8. **Satisfying success** — direct redirect to the app, no intermediate screens.
+9. **Terms + Privacy checkboxes** — two separate, **pre-checked** boxes under the email field, each
+   label linking to the real served document (new tab). Unchecking either blocks submit with a clear
+   message; the server independently requires an explicit acceptance. Never pre-check *optional*
+   consent (marketing, analytics).
+
+---
+
+## Legal acceptance (Terms of Service + Privacy Policy)
+
+Registration captures agreement to both documents. Because registration is implicit and `request`
+must not look up the account, the boxes live on the **single entry screen**, are validated before any
+code is sent, and are stored on the challenge until the account is created at `verify`.
+
+- **Two boxes, not one** — the Terms are a contract; the Privacy Policy is a data-protection notice.
+- **Pre-checked by default**, and still explicitly required by the server. Read
+  `references/legal-consent.md` for the caveat on pre-ticked consent — it is a product decision to
+  document, not a detail to leave implicit.
+- **Real pages.** If the app has no `/terms` and `/privacy`, write them by describing what the app
+  actually does (what it collects, why, how long, who receives it, who operates it, which law
+  applies) *before* shipping the boxes. Never link to a 404 or to an unrelated third-party policy.
+- **Versioned.** Each document carries a version + effective date; the record stores which version the
+  user accepted. A version bump drives `requiresConsent` / `reconsented` on the next login.
+- **Optional consent is separate and unchecked** — marketing email and analytics never inherit the
+  pre-checked state.
+
+Full pattern, API additions, data model, versioning, and a contents checklist:
+`references/legal-consent.md`. Working pages and the pre-checked form:
+`examples/node-express/src/legal-pages.ts` (`GET /terms`, `GET /privacy`) and
+`examples/node-express/src/views.ts` (`GET /sign-in`).
 
 ---
 
@@ -233,12 +291,15 @@ code: `examples/node-express/src/social.ts` (+ `social.test.ts`).
 ## How to apply this skill
 
 1. Map the **flow** and **API contract** onto your framework's routing/controllers.
-2. Create the **`otp_challenges`** store keyed by `id`, with an index on `email`.
+2. Create the **`otp_challenges`** store keyed by `id`, with an index on `email`, plus consent fields.
 3. Implement the **security rules** using your platform's crypto, hashing, and rate-limit primitives
    (see `references/security-rules.md` for the exact algorithms).
-4. Build the two screens (request + verify) per the **UX rules**.
-5. Add the scheduled **retention** purge and the mail **sender-auth** setup.
-6. Walk the **verification checklist** before finishing.
+4. Build the two screens (request + verify) per the **UX rules**, including the two pre-checked
+   Terms/Privacy boxes.
+5. **Publish real Terms and Privacy pages** at the URLs the boxes point to — write them from what the
+   app actually collects and does (see `references/legal-consent.md`), versioned and dated.
+6. Add the scheduled **retention** purge and the mail **sender-auth** setup.
+7. Walk the **verification checklist** before finishing.
 
 Use `references/reference-implementation.md` as a language-neutral starting point and translate each
 function into your stack.
@@ -268,6 +329,12 @@ the verification checklist after updating. See `CHANGELOG.md` for what changed b
 - [ ] SPF/DKIM/DMARC configured; bounce handling does not leak existence; retention/GC scheduled.
 - [ ] The "check inbox and spam" banner and the support link are present on both forms.
 - [ ] Email is marked verified when the code is proven.
+- [ ] Terms + Privacy boxes are separate, pre-checked, and required; each links to a live page.
+- [ ] `request` returns 422 and sends no mail unless both acceptance flags are explicitly true.
+- [ ] The user record stores the accepted **version + timestamp** for each document.
+- [ ] Re-accepting the same version does not overwrite the original timestamp.
+- [ ] A version bump produces `requiresConsent` (or `reconsented`) on the next login.
+- [ ] Optional consent (marketing, analytics) is separate and **not** pre-checked.
 - [ ] Social login uses Authorization Code + PKCE; ID token verified server-side (JWKS, iss/aud/exp/nonce).
 - [ ] Social account linking only on provider `sub` or a *verified* email — never an unverified email.
 
@@ -281,4 +348,6 @@ the verification checklist after updating. See `CHANGELOG.md` for what changed b
 - `references/reference-implementation.md` — neutral pseudocode to translate into any stack.
 - `references/biometric-login.md` — Face ID / Touch ID architecture, flows, device lifecycle.
 - `references/social-login.md` — OAuth/OIDC social login (Google, GitHub, LinkedIn), account linking.
+- `references/legal-consent.md` — Terms/Privacy acceptance: placement, pre-checked boxes, versioning,
+  audit trail, and how to write the two documents for your app.
 - `examples/` — concrete reference implementations (Node/Express, iOS, Android).

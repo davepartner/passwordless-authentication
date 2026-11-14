@@ -13,6 +13,9 @@ import {
 import { hit, tooMany } from './rateLimit.js';
 import { challengeStore, deviceStore, sessionStore } from './store.js';
 import { completeLogin } from './user.js';
+import { consentFromInput, type ConsentRecord } from './consent.js';
+import { renderPrivacyPage, renderTermsPage } from './legal-pages.js';
+import { renderSignInPage } from './views.js';
 import { consumeChallenge, issueChallenge, verifySignature } from './biometric.js';
 import {
   buildAuthorizeUrl,
@@ -49,6 +52,22 @@ function requireAuth(req: Request): string | null {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Pages — sign-in form + the real legal documents the checkboxes point at
+// ─────────────────────────────────────────────────────────────────────────────
+
+router.get('/sign-in', (_req, res) => {
+  res.type('html').send(renderSignInPage());
+});
+
+router.get('/terms', (_req, res) => {
+  res.type('html').send(renderTermsPage());
+});
+
+router.get('/privacy', (_req, res) => {
+  res.type('html').send(renderPrivacyPage());
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Email OTP
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -57,6 +76,18 @@ router.post('/auth/otp/request', async (req, res) => {
   const email = normalize(String(req.body?.email ?? ''));
   if (!EMAIL_RE.test(email)) {
     res.status(422).json({ ok: false, error: 'Enter a valid email address.' });
+    return;
+  }
+
+  // Terms + Privacy acceptance is required before a code is sent. The client
+  // renders both boxes pre-checked, but the server still demands an explicit
+  // "true" — a pre-checked default is a UI affordance, not consent.
+  const consentResult = consentFromInput({
+    acceptedTerms: req.body?.acceptedTerms,
+    acceptedPrivacy: req.body?.acceptedPrivacy,
+  });
+  if (!consentResult.ok) {
+    res.status(422).json({ ok: false, error: consentResult.error, field: 'consent' });
     return;
   }
 
@@ -78,7 +109,7 @@ router.post('/auth/otp/request', async (req, res) => {
     return;
   }
 
-  const requestId = await issueAndSend(email, ip);
+  const requestId = await issueAndSend(email, ip, consentResult.consent);
 
   hit(`send:email:${email}`, HOUR);
   hit(`send:ip:${ip}`, HOUR);
@@ -142,7 +173,10 @@ router.post('/auth/otp/verify', async (req, res) => {
   // Success.
   challengeStore.delete(requestId);
 
-  const { isNew, redirect, flash } = completeLogin(email);
+  const { isNew, redirect, flash, reconsented, requiresConsent } = completeLogin(
+    email,
+    challenge.consent,
+  );
   const token = sessionStore.create(email);
 
   res.json({
@@ -151,6 +185,10 @@ router.post('/auth/otp/verify', async (req, res) => {
     sessionToken: token,
     isNewUser: isNew,
     ...(flash ? { flash } : {}),
+    // The client shows a one-time acceptance step when the published versions
+    // have moved on since this user last agreed.
+    ...(requiresConsent ? { requiresConsent: true } : {}),
+    ...(reconsented && !isNew ? { reconsented: true } : {}),
   });
 });
 
@@ -337,7 +375,11 @@ router.get('/auth/social/:provider/callback', async (req, res) => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function issueAndSend(email: string, ip: string): Promise<string> {
+async function issueAndSend(
+  email: string,
+  ip: string,
+  consent: ConsentRecord | null,
+): Promise<string> {
   const code = generateCode();
   const requestId = randomBytes(16).toString('hex');
 
@@ -349,6 +391,7 @@ async function issueAndSend(email: string, ip: string): Promise<string> {
     attempts: 0,
     consumedAt: null,
     ip,
+    consent,
   });
 
   // Replace with your transactional mail provider. Do NOT log the code itself.

@@ -5,6 +5,11 @@ All notable changes to this skill. Pin by tag/commit when consuming.
 ## [Unreleased]
 
 ### Changes
+- **Terms of Service + Privacy Policy acceptance at registration.** Two separate, pre-checked
+  checkboxes on the entry screen, each linking to a real, served, versioned document. Acceptance is
+  validated server-side (422 + no email when missing), carried on the challenge, and persisted to the
+  account as **version + timestamp**. New `references/legal-consent.md`, plus real `/terms` and
+  `/privacy` pages and a `/sign-in` form in the Node example, with tests.
 - **OTP length raised to 8 digits** (default) for higher assurance.
 - **First-login profile completion** — a brand-new registration is redirected to profile edit with a
   welcome flash message (registration only collects email).

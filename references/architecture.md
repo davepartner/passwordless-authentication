@@ -12,13 +12,16 @@ Client                          Server                          Mail provider
   │                                │                                │
   │  GET /login                    │                                │
   │ ─────────────────────────────▶ │  render single-email form      │
+  │                                │  + pre-checked Terms/Privacy   │
   │                                │                                │
   │  POST /auth/otp/request        │                                │
-  │  { email }                     │                                │
+  │  { email, acceptedTerms: true, │                                │
+  │    acceptedPrivacy: true }     │                                │
   │ ─────────────────────────────▶ │  validate email (syntax)       │
+  │                                │  validate consent (both true)  │
   │                                │  rate-limit (email + IP)       │
   │                                │  generate code (CSPRNG)        │
-  │                                │  create challenge (id)         │
+  │                                │  create challenge (id+consent) │
   │                                │ ──────────────────────────────▶ send code email
   │                                │  (NO user lookup)              │
   │ ◀───────────────────────────── │  200 { ok, requestId, resend_after }
@@ -33,6 +36,7 @@ Client                          Server                          Mail provider
   │                                │  constant-time compare          │
   │                                │  check expiry + attempts        │
   │                                │  find-or-create user            │
+  │                                │  persist consent (version+time) │
   │                                │  establish session (regenerate) │
   │ ◀───────────────────────────── │  200 { ok, redirect }          │
   │  redirect → /dashboard         │                                │
@@ -77,23 +81,27 @@ per-IP), so this does not enable unbounded code issuance.
 
 ### `POST /auth/otp/request`
 
-- **In:** `{ "email": string }`.
-- **Server steps (in order):** normalize → validate syntax → rate-limit (email then IP) → generate
-  code (CSPRNG) → create challenge (id, email, code_hash, expires_at, ip) → send email → respond.
+- **In:** `{ "email": string, "acceptedTerms": boolean, "acceptedPrivacy": boolean }`.
+- **Server steps (in order):** normalize → validate syntax → **validate consent** → rate-limit (email
+  then IP) → generate code (CSPRNG) → create challenge (id, email, code_hash, expires_at, ip,
+  consent) → send email → respond.
 - **Out (always identical):**
   `{ "ok": true, "requestId": "<id>", "resend_after": 30, "message": "If that address is registered, a code is on its way." }`
-- **Errors:** invalid syntax → 422; rate-limited → 429 with `retry_after`. Neither reveals account
-  existence.
+- **Errors:** invalid syntax → 422; consent missing/false → 422 with `field: "consent"` (no email is
+  sent); rate-limited → 429 with `retry_after`. None reveals account existence.
 
 ### `POST /auth/otp/verify`
 
 - **In:** `{ "requestId": string, "code": string }`.
 - **Server steps:** load challenge by `requestId` → rate-limit (verify, failures only) → constant-time
   compare (dummy hash when absent) → check expiry, attempts → on success: find-or-create user, mark
-  verified, establish session, regenerate session id, clear state, consume the challenge.
+  verified, **persist the acceptance carried by the challenge**, establish session, regenerate session
+  id, clear state, consume the challenge.
 - **Out success:** `{ "ok": true, "redirect": "/dashboard", "isNewUser": false }`. For a
   **first-time** registration the server returns `redirect: "/profile/edit"` plus a `flash` message
   ("Welcome! Complete your profile to get started.") so the email-only account can be completed.
+  When the published document versions moved on, add `requiresConsent: true` (client re-presents the
+  acceptance step) — or `reconsented: true` when this login supplied the newer acceptance.
 - **Out failure:** one generic message: `{ "ok": false, "error": "The code is invalid or has expired." }`.
 
 ### `POST /auth/otp/resend`
@@ -120,7 +128,17 @@ otp_challenges
   attempts      integer (default 0)
   consumed_at   timestamp (nullable)
   ip_address    string (nullable, PII)
+  terms_version / terms_accepted_at         consent captured at request time
+  privacy_version / privacy_accepted_at
   created_at    timestamp
+
+users
+  email                     normalized lowercase, unique
+  email_verified_at         timestamp
+  terms_version             string   ← version accepted, not a boolean
+  terms_accepted_at         timestamp
+  privacy_version           string
+  privacy_accepted_at       timestamp
 ```
 
 - **Keyed by `id`.** Index `email` for retention/rate-limit queries.
@@ -147,3 +165,7 @@ otp_challenges
 | Mail bounces (NDR) | Handle bounces without surfacing/logging a distinct "no such user" (enumeration leak). |
 | Concurrent requests | Each request gets its own challenge id; no cross-invalidation. |
 | First-time login (new account) | Redirect to profile edit with a flash message; returning users go to the dashboard. |
+| Consent unchecked or missing | `request` → 422 (`field: "consent"`); no code is generated or sent. |
+| Consent accepted, code never used | Challenge expires and is purged; no account and no consent record are created. |
+| Document version bumped | `verify` returns `requiresConsent: true` (or `reconsented: true` when accepted on this login); first accept time is preserved for unchanged versions. |
+| Legal page missing at build time | Do not ship the checkbox — write and publish the documents first (see `legal-consent.md`). |

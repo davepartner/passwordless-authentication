@@ -52,6 +52,7 @@ tickets. Passwordless OTP auth removes the thing attackers steal (the password) 
 |------|-------------------|
 | **Single email field** | One clean input for both login and registration (auto-register on first code). |
 | **Email-only registration** | Sign-up is the same single email field — no name, no password; the account is created on the first successful code. |
+| **Terms + Privacy acceptance** | Two separate, **pre-checked** boxes under the email field, each linking to a real, versioned, served page. Required server-side; accepted version + timestamp stored on the account. |
 | **First-login profile completion** | Since registration collects only email, a first-time login is sent to a profile-edit page with a "complete your profile" flash message. |
 | **Anti-enumeration** | The request endpoint never queries the account store; identical response either way. |
 | **Dynamic button** | Client-side email regex enables the submit button the moment the address is valid. |
@@ -77,9 +78,12 @@ references/
 ├── ux-rules.md                       # UX behaviours with accessibility notes
 ├── reference-implementation.md       # Language-neutral pseudocode to translate into any stack
 ├── biometric-login.md                # Face ID / Touch ID login architecture for mobile
-└── social-login.md                   # OAuth/OIDC social login (Google, GitHub, LinkedIn)
+├── social-login.md                   # OAuth/OIDC social login (Google, GitHub, LinkedIn)
+└── legal-consent.md                  # Terms/Privacy acceptance: pre-checked boxes, versioning, pages
 examples/
-├── node-express/                     # TypeScript/Express backend (OTP + biometric server side) + unit tests
+├── node-express/                     # TypeScript/Express backend (OTP + consent + biometric) + tests
+│   ├── src/legal-pages.ts            # the real /terms and /privacy documents, served
+│   └── src/views.ts                  # the pre-checked sign-in form at /sign-in
 ├── ios-faceid/                       # Swift Face ID client
 └── android-biometric/                # Kotlin biometric client
 CHANGELOG.md                          # version history — pin by tag/commit
@@ -91,10 +95,13 @@ LICENSE
 ## The flow (one minute)
 
 ```
-POST /auth/otp/request  { email }              → issue + email 8-digit code (hashed, expiring)
+POST /auth/otp/request  { email, acceptedTerms, acceptedPrivacy }
+                                               → issue + email 8-digit code (hashed, expiring)
+                                                 consent validated first — no mail without it
                                                  no user lookup — enumeration-safe
         ↓ (verify view: code entry, 30s countdown, "check spam" banner)
 POST /auth/otp/verify   { requestId, code }    → constant-time check → find-or-create user → login
+                                                 consent version + timestamp persisted on the account
         ↓
 redirect → /dashboard
 ```
@@ -114,6 +121,7 @@ Every one of these is enforced by the spec and demonstrated in `examples/node-ex
 | **Rate limiting** (per-email, per-IP, 30s resend cooldown) | Email bombing and code guessing. |
 | **Session regeneration + CSRF** | Session fixation and cross-site request forgery. |
 | **Email-verified on OTP** | Unverified accounts — proving the code proves the inbox. |
+| **Server-enforced consent** | Registration without an explicit Terms + Privacy acceptance — 422, no code sent. |
 | **Authenticated biometric enrollment** | Key injection — only a signed-in user can enroll a device. |
 | **Sender auth (SPF/DKIM/DMARC) + bounce safety** | Deliverability failure and bounce-based enumeration. |
 | **Retention & PII controls** | Stale data growth and GDPR/CCPA exposure. |
@@ -186,6 +194,29 @@ Add "Continue with Google / GitHub / LinkedIn" alongside email OTP and Face ID:
 
 ---
 
+## Terms of Service & Privacy Policy acceptance
+
+Registration captures agreement to both documents — with boxes that **point at pages a user can
+actually read**:
+
+- **Two separate checkboxes** under the email field, **checked by default**, each label linking to
+  the real `/terms` and `/privacy` page (opened in a new tab so a half-typed form is not lost).
+- **The server still requires an explicit acceptance.** Pre-checked is a UI affordance, not consent:
+  `POST /auth/otp/request` returns `422` and sends no email unless both flags are true.
+- **Stored as version + timestamp**, not a boolean — so you can answer "what did they agree to?".
+  Re-accepting the same version keeps the original timestamp; a version bump raises
+  `requiresConsent` on the next login.
+- **Optional consent stays separate and unchecked** — marketing and analytics never inherit the
+  pre-ticked state.
+- **Real documents, not links to nowhere.** If the app has no policy pages, write them from what the
+  app actually collects and does. The example ships both, served and versioned, written for exactly
+  this system: `examples/node-express/src/legal-pages.ts` → `GET /terms`, `GET /privacy`.
+
+The full pattern — placement in an enumeration-safe flow, the pre-ticked-consent caveat, data model,
+versioning, and a contents checklist for each document — is in `references/legal-consent.md`.
+
+---
+
 ## Pull it & start using
 
 Copy this prompt into your agent (Claude Code, Codex, Cursor, OpenCode, …) to install the skill and
@@ -200,6 +231,8 @@ and implement email-OTP login for this project following its spec exactly:
 - An 8-digit code step with a persistent "check your inbox and spam folder" flash message and a 30s
   server-synced resend countdown.
 - A "Trouble logging in? Contact admin" button on every auth page, and inline errors with no reload.
+- Two separate Terms of Service and Privacy Policy checkboxes, pre-checked, each linking to a real
+  served page; require an explicit acceptance server-side and store the accepted version + timestamp.
 - The full security rules: hashed OTPs (bcrypt/argon2id), constant-time compare, expiry + attempt
   limits, per-email/per-IP rate limiting, session regeneration, and zero account enumeration.
 
@@ -262,3 +295,8 @@ Simple authentication, straightforward authentication, high-fidelity authenticat
 authentication, authentication that never fails, email-only signup, email-only registration, no
 password signup, contact button, contact admin, flash message, action guidance, frictionless login,
 simple login, quick sign in, onboarding without a password, low-friction auth.
+
+Terms of Service, ToS, terms and conditions, privacy policy, legal pages, consent checkbox, terms
+acceptance, privacy acceptance, pre-checked checkbox, checked by default, GDPR consent record,
+consent versioning, re-acceptance, requiresConsent, policy versioning, effective date, data retention
+policy, cookie notice, account deletion, DPA, CCPA notice at collection, website legal pages.

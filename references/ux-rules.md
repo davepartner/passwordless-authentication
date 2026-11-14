@@ -15,8 +15,35 @@ React/Vue/Svelte, native mobile). Accessibility notes included.
   - Enable the submit button **instantly** when the address is syntactically valid.
   - While disabled, show a **visible hint** ("Enter a valid email to continue") — never a silent,
     unexplained dead state.
+- **Terms + Privacy acceptance** (see below) sits directly under the email field, before the submit
+  button.
 - **Support link** at the base: "Trouble logging in? Contact admin" → `mailto:` (or a support route).
 - **Server errors** (rate-limited, invalid) render inline on the form; input value is preserved.
+
+### Terms of Service + Privacy Policy block
+
+```html
+<fieldset>
+  <legend>Before you continue</legend>
+
+  <input id="accepted-terms" name="acceptedTerms" type="checkbox" checked required>
+  <label for="accepted-terms">I agree to the
+    <a href="/terms" target="_blank" rel="noopener">Terms of Service</a>.</label>
+
+  <input id="accepted-privacy" name="acceptedPrivacy" type="checkbox" checked required>
+  <label for="accepted-privacy">I have read and accept the
+    <a href="/privacy" target="_blank" rel="noopener">Privacy Policy</a>.</label>
+</fieldset>
+```
+
+- **Two boxes**, one per document — never a single combined "Terms and Privacy" box.
+- **Pre-checked** (`checked`), still `required`, and still enforced on the server.
+- **Labels are the links.** The document name in the label text is the anchor, so the accessible name
+  includes it ("I agree to the Terms of Service, link"). Open in a new tab so a half-typed form is not
+  lost.
+- **Unchecked → submit disabled** with an explanatory message; do not fail silently.
+- **Never pre-check optional consent** (marketing, analytics) — only these two.
+- Target size ≥ 44px for the row, and a visible `:focus-visible` ring on the checkbox itself.
 
 ### Accessibility
 - The hint and button state are announced to screen readers (`aria-live="polite"` on the hint).

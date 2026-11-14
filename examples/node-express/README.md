@@ -7,15 +7,21 @@ A TypeScript/Express implementation of the email-OTP flow and the server half of
 ```bash
 npm install
 npm run dev        # tsx watch, http://localhost:3000
-npm test           # unit tests (otp + rate limiter)
+npm test           # unit tests (otp + rate limiter + consent)
 ```
+
+Then open <http://localhost:3000/sign-in>. The two acceptance boxes are pre-checked and link to the
+real documents at `/terms` and `/privacy`.
 
 ## Endpoints
 
 | Method | Path | Body | Auth | Notes |
 |--------|------|------|------|-------|
-| POST | `/auth/otp/request` | `{ email }` | — | issues + "emails" a code; uniform response (enumeration-safe) |
-| POST | `/auth/otp/verify` | `{ requestId, code }` | — | verifies, find-or-create user, returns a session token + redirect (new users → `/profile/edit` with a welcome flash) |
+| GET | `/sign-in` | — | — | the entry form: email + pre-checked Terms/Privacy boxes |
+| GET | `/terms` | — | — | **real** Terms of Service (versioned, dated) |
+| GET | `/privacy` | — | — | **real** Privacy Policy (versioned, dated) |
+| POST | `/auth/otp/request` | `{ email, acceptedTerms, acceptedPrivacy }` | — | issues + "emails" a code; 422 and no mail without both acceptances; uniform response (enumeration-safe) |
+| POST | `/auth/otp/verify` | `{ requestId, code }` | — | verifies, find-or-create user, persists the accepted versions, returns a session token + redirect (new users → `/profile/edit` with a welcome flash) |
 | POST | `/auth/otp/resend` | `{ requestId }` | — | refreshes the same challenge after the 30s cooldown |
 | POST | `/auth/logout` | — | Bearer | destroys the session |
 | POST | `/auth/biometric/enroll` | `{ publicKey, deviceId, label }` | **Bearer** | store a device public key (authenticated) |
@@ -39,3 +45,7 @@ npm test           # unit tests (otp + rate limiter)
   existence.
 - **Biometric signature verification** (`biometric.ts`) expects an SPKI PEM public key and a DER
   signature, matching Android's native output. iOS clients must convert (see `../ios-faceid/README.md`).
+- **Legal pages are illustrative but complete.** `legal-pages.ts` describes exactly what this example
+  collects, and the operator details are read from `LEGAL_ENTITY`, `LEGAL_ADDRESS`,
+  `LEGAL_CONTACT_EMAIL`, `LEGAL_PRIVACY_EMAIL` and `LEGAL_JURISDICTION` at the top of the file. Replace
+  them and have counsel review the text before production — an inaccurate policy is worse than none.

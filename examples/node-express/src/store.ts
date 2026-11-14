@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import type { ConsentRecord } from './consent.js';
 
 /**
  * In-memory stores. Replace with Postgres/Redis in production — the record
@@ -14,11 +15,17 @@ export interface OtpChallenge {
   attempts: number;
   consumedAt: number | null;
   ip: string | null;
+  /** Terms/Privacy acceptance captured at request time, persisted at verify. */
+  consent: ConsentRecord | null;
 }
 
 export interface User {
   email: string;
   emailVerifiedAt: number | null;
+  termsVersion: string | null;
+  termsAcceptedAt: number | null;
+  privacyVersion: string | null;
+  privacyAcceptedAt: number | null;
 }
 
 export interface DeviceCredential {
