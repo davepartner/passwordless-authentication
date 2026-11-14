@@ -1,8 +1,9 @@
 import { userStore, type User } from './store.js';
 import { mergeConsent, needsReconsent, type ConsentRecord } from './consent.js';
+import { roleFor } from './roles.js';
 
 export const DEFAULT_REDIRECT = '/dashboard';
-export const PROFILE_EDIT_REDIRECT = '/profile/edit';
+export const PROFILE_REDIRECT = '/profile';
 export const WELCOME_FLASH = 'Welcome! Complete your profile to get started.';
 
 export interface LoginOutcome {
@@ -16,12 +17,34 @@ export interface LoginOutcome {
   requiresConsent: boolean;
 }
 
+/** A brand-new account: email only, plus everything the profile page expects. */
+export function newUser(email: string, now = Date.now()): User {
+  return {
+    email,
+    emailVerifiedAt: null,
+    createdAt: now,
+    role: roleFor(email),
+    termsVersion: null,
+    termsAcceptedAt: null,
+    privacyVersion: null,
+    privacyAcceptedAt: null,
+    sessionDays: null,
+    twoFactorSecret: null,
+    twoFactorEnabledAt: null,
+    twoFactorLastStep: null,
+    pendingTwoFactorSecret: null,
+    pendingTwoFactorCreatedAt: null,
+    recoveryCodes: [],
+    previousEmails: [],
+  };
+}
+
 /**
  * Find-or-create the user after a successful code verification, and decide
  * where to send them.
  *
  * A brand-new registration has only an email address, so first-time users are
- * sent to the profile-edit page with a welcome flash message to complete their
+ * sent to the profile page with a welcome flash message to complete their
  * profile. Returning users go straight to the dashboard.
  *
  * `consent` is the acceptance captured on the challenge when the code was
@@ -31,13 +54,13 @@ export interface LoginOutcome {
 export function completeLogin(
   email: string,
   consent: ConsentRecord | null = null,
+  now = Date.now(),
 ): LoginOutcome {
   const existing = userStore.get(email);
 
   if (existing) {
-    const updated = consent
-      ? mergeConsent({ ...existing, emailVerifiedAt: Date.now() }, consent)
-      : { ...existing, emailVerifiedAt: Date.now() };
+    const base = { ...existing, emailVerifiedAt: now };
+    const updated = consent ? mergeConsent(base, consent) : base;
     userStore.put(email, updated);
 
     const stale = needsReconsent(updated);
@@ -50,21 +73,14 @@ export function completeLogin(
     };
   }
 
-  const base: User = {
-    email,
-    emailVerifiedAt: Date.now(),
-    termsVersion: null,
-    termsAcceptedAt: null,
-    privacyVersion: null,
-    privacyAcceptedAt: null,
-  };
+  const base = newUser(email, now);
   const user = consent ? mergeConsent(base, consent) : base;
-  userStore.put(email, user);
+  userStore.put(email, { ...user, emailVerifiedAt: now });
 
   return {
-    user,
+    user: userStore.get(email)!,
     isNew: true,
-    redirect: PROFILE_EDIT_REDIRECT,
+    redirect: PROFILE_REDIRECT,
     flash: WELCOME_FLASH,
     reconsented: Boolean(consent),
     // A registration that reached this point without a record is treated as

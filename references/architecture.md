@@ -97,8 +97,12 @@ per-IP), so this does not enable unbounded code issuance.
   compare (dummy hash when absent) → check expiry, attempts → on success: find-or-create user, mark
   verified, **persist the acceptance carried by the challenge**, establish session, regenerate session
   id, clear state, consume the challenge.
-- **Out success:** `{ "ok": true, "redirect": "/dashboard", "isNewUser": false }`. For a
-  **first-time** registration the server returns `redirect: "/profile/edit"` plus a `flash` message
+- **Out success (2FA on):** `{ "ok": true, "requires2fa": true, "mfaToken": "<opaque>", "expiresIn": 300 }`
+  — **no session is issued**; the client must complete `POST /auth/2fa/verify`, which mints a fresh
+  token and writes the login audit event.
+- **Out success:** `{ "ok": true, "redirect": "/dashboard", "sessionToken": "<token>", "sessionDays": 365, "isNewUser": false }`.
+  The duration comes from `clamp(user preference ?? admin default, min, max)` — 365 days by default. For a
+  **first-time** registration the server returns `redirect: "/profile"` plus a `flash` message
   ("Welcome! Complete your profile to get started.") so the email-only account can be completed.
   When the published document versions moved on, add `requiresConsent: true` (client re-presents the
   acceptance step) — or `reconsented: true` when this login supplied the newer acceptance.
@@ -135,11 +139,31 @@ otp_challenges
 users
   email                     normalized lowercase, unique
   email_verified_at         timestamp
+  role                      'user' | 'admin'
   terms_version             string   ← version accepted, not a boolean
   terms_accepted_at         timestamp
   privacy_version           string
   privacy_accepted_at       timestamp
+  session_days              integer | null   ← null = follow the admin default
+  two_factor_*              secret / enabled_at / last_step / pending_*
+  recovery_codes            [{ hash, used_at }]
+  previous_emails           []
+
+sessions
+  id, token_hash (sha256), email
+  created_at, expires_at, last_seen_at, last_strong_auth_at
+  ip, location, user_agent, device_label, methods []
+  revoked_at, revoked_reason
+
+mfa_challenges                 email_change_requests          audit_events
+  id, token_hash, email          id, user_email, new_email      id, at, actor, target
+  created_at, expires_at         code_hash, created_at          action, outcome
+  attempts, consumed_at          expires_at, attempts           ip, location, ua, device
+  device metadata                consumed_at, metadata          meta
 ```
+
+Full detail for each store lives in `two-factor.md`, `session-management.md`, `email-change.md`, and
+`admin-and-audit.md`.
 
 - **Keyed by `id`.** Index `email` for retention/rate-limit queries.
 - **Lifecycle:** created on `request` → updated on `resend` → consumed (or deleted) on successful
@@ -169,3 +193,8 @@ users
 | Consent accepted, code never used | Challenge expires and is purged; no account and no consent record are created. |
 | Document version bumped | `verify` returns `requiresConsent: true` (or `reconsented: true` when accepted on this login); first accept time is preserved for unchanged versions. |
 | Legal page missing at build time | Do not ship the checkbox — write and publish the documents first (see `legal-consent.md`). |
+| 2FA enabled, no second step completed | No session, ever. Only `POST /auth/2fa/verify` creates one. |
+| Second factor replayed within its step | Rejected: the last accepted TOTP step is stored on the user. |
+| Admin lowers the session default | Live sessions keep their original expiry; only new sessions use the new policy. |
+| Login email changed | Other devices are revoked, the current token is rotated, the old address gets a notice. |
+| Admin opens a user record | `admin.user_viewed` is written before the page is rendered. |

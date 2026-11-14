@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import type { Request } from 'express';
+import type { Request, Response } from 'express';
 import { randomBytes } from 'node:crypto';
 import {
   GENERIC_ERROR,
@@ -11,11 +11,48 @@ import {
   matchesOrDummy,
 } from './otp.js';
 import { hit, tooMany } from './rateLimit.js';
-import { challengeStore, deviceStore, sessionStore } from './store.js';
+import {
+  challengeStore,
+  deviceStore,
+  emailChangeStore,
+  isLive,
+  mfaStore,
+  sessionStore,
+  userStore,
+  type SessionRecord,
+} from './store.js';
 import { completeLogin } from './user.js';
 import { consentFromInput, type ConsentRecord } from './consent.js';
 import { renderPrivacyPage, renderTermsPage } from './legal-pages.js';
 import { renderSignInPage } from './views.js';
+import { renderProfilePage } from './views-profile.js';
+import { renderAdminPage, renderAdminUserPage } from './views-admin.js';
+import { isValidEmail, normalizeEmail } from './email.js';
+import { audit } from './audit.js';
+import { requestMeta } from './meta.js';
+import {
+  DAY_MS,
+  effectiveDays,
+  getPolicy,
+  updatePolicy,
+  type PolicyPatch,
+} from './sessionPolicy.js';
+import { isAdmin } from './roles.js';
+import {
+  beginEnrollment,
+  confirmEnrollment,
+  disableTwoFactor,
+  forceDisableTwoFactor,
+  isTwoFactorEnabled,
+  regenerateRecoveryCodes,
+  SECOND_FACTOR_ERROR,
+  verifySecondFactor,
+} from './twofactor.js';
+import {
+  confirmEmailChange,
+  pendingEmailChangeFor,
+  startEmailChange,
+} from './emailChange.js';
 import { consumeChallenge, issueChallenge, verifySignature } from './biometric.js';
 import {
   buildAuthorizeUrl,
@@ -33,22 +70,134 @@ const FIFTEEN_MIN = 15 * 60_000;
 const SEND_EMAIL_LIMIT = 10;
 const SEND_IP_LIMIT = 20;
 const VERIFY_LIMIT = 10;
+const MFA_VERIFY_LIMIT = 10;
+const EMAIL_CHANGE_LIMIT = 5;
 const MAX_DEVICES_PER_ACCOUNT = 5;
 
 export const router = Router();
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const CODE_RE = /^\d{8}$/;
 
-function normalize(email: string): string {
-  return email.trim().toLowerCase();
+// ─────────────────────────────────────────────────────────────────────────────
+// Session helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+function bearer(req: Request): string {
+  const header = req.get('authorization') ?? '';
+  return header.startsWith('Bearer ') ? header.slice('Bearer '.length) : '';
 }
 
-/** Resolve the session email from an `Authorization: Bearer <token>` header. */
-function requireAuth(req: Request): string | null {
-  const header = req.get('authorization') ?? '';
-  const token = header.startsWith('Bearer ') ? header.slice('Bearer '.length) : '';
-  return token ? sessionStore.emailFor(token) : null;
+function currentSession(req: Request): SessionRecord | null {
+  const token = bearer(req);
+  return token ? sessionStore.sessionFor(token) : null;
+}
+
+/** Authenticated session or a 401. */
+function requireSession(req: Request, res: Response): SessionRecord | null {
+  const session = currentSession(req);
+  if (!session) {
+    res.status(401).json({ ok: false, error: 'Please sign in again.' });
+    return null;
+  }
+  return session;
+}
+
+/** Admin session or a 401/403. */
+function requireAdmin(req: Request, res: Response): SessionRecord | null {
+  const session = requireSession(req, res);
+  if (!session) return null;
+
+  const user = userStore.get(session.email);
+  if (!isAdmin(user)) {
+    res.status(403).json({ ok: false, error: 'Administrator access required.' });
+    return null;
+  }
+  return session;
+}
+
+type LoginOutcome = {
+  redirect: string;
+  isNew?: boolean;
+  flash?: string;
+  requiresConsent?: boolean;
+};
+
+/**
+ * The single place a session is created. Every login path (email OTP, TOTP,
+ * biometric, social) goes through here, so a second factor can never be
+ * bypassed by using a different endpoint.
+ *
+ * A biometric login is already two factors (device possession + biometric), so
+ * it satisfies MFA on its own — documented in references/session-management.md.
+ */
+function finishLogin(
+  req: Request,
+  res: Response,
+  email: string,
+  methods: string[],
+  outcome: LoginOutcome,
+  options: { skipMfa?: boolean } = {},
+): void {
+  const user = userStore.get(email);
+  if (!user) {
+    res.status(422).json({ ok: false, error: GENERIC_ERROR });
+    return;
+  }
+
+  const meta = requestMeta(req);
+
+  if (!options.skipMfa && isTwoFactorEnabled(user)) {
+    const { token } = mfaStore.create(email, meta);
+    audit.record({
+      action: 'login.2fa_required',
+      actor: email,
+      target: email,
+      ...meta,
+    });
+    res.json({
+      ok: true,
+      requires2fa: true,
+      mfaToken: token,
+      expiresIn: Math.floor(mfaStore.ttlMs / 1000),
+    });
+    return;
+  }
+
+  const days = effectiveDays(user);
+  const { token, session } = sessionStore.create(email, meta, days * DAY_MS, methods);
+
+  audit.record({
+    action: 'login.succeeded',
+    actor: email,
+    target: email,
+    ...meta,
+    meta: { methods: methods.join('+'), days, sessionId: session.id },
+  });
+
+  res.json({
+    ok: true,
+    redirect: outcome.redirect,
+    sessionToken: token,
+    sessionId: session.id,
+    sessionDays: days,
+    ...(outcome.isNew ? { isNewUser: true } : {}),
+    ...(outcome.flash ? { flash: outcome.flash } : {}),
+    ...(outcome.requiresConsent ? { requiresConsent: true } : {}),
+  });
+}
+
+/**
+ * Shared failure budget for every place a second-factor code can be entered:
+ * login, disabling 2FA, regenerating recovery codes, and the email-change
+ * step-up. Without it, a live session would allow offline-speed guessing of a
+ * 6-digit TOTP code.
+ */
+function secondFactorLimited(email: string): { limited: boolean; retryAfter?: number } {
+  return tooMany(`verify2fa:${email}`, MFA_VERIFY_LIMIT, FIFTEEN_MIN);
+}
+
+function secondFactorFailed(email: string): void {
+  hit(`verify2fa:${email}`, FIFTEEN_MIN);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -67,14 +216,22 @@ router.get('/privacy', (_req, res) => {
   res.type('html').send(renderPrivacyPage());
 });
 
+router.get('/dashboard', (req, res) => {
+  if (!currentSession(req)) {
+    res.redirect('/sign-in');
+    return;
+  }
+  res.redirect('/profile');
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Email OTP
 // ─────────────────────────────────────────────────────────────────────────────
 
 // POST /auth/otp/request — enumeration-safe: no user lookup, uniform response.
 router.post('/auth/otp/request', async (req, res) => {
-  const email = normalize(String(req.body?.email ?? ''));
-  if (!EMAIL_RE.test(email)) {
+  const email = normalizeEmail(String(req.body?.email ?? ''));
+  if (!isValidEmail(email)) {
     res.status(422).json({ ok: false, error: 'Enter a valid email address.' });
     return;
   }
@@ -173,23 +330,82 @@ router.post('/auth/otp/verify', async (req, res) => {
   // Success.
   challengeStore.delete(requestId);
 
-  const { isNew, redirect, flash, reconsented, requiresConsent } = completeLogin(
-    email,
-    challenge.consent,
-  );
-  const token = sessionStore.create(email);
+  const { isNew, redirect, flash, requiresConsent } = completeLogin(email, challenge.consent);
 
-  res.json({
-    ok: true,
+  finishLogin(req, res, email, ['email_otp'], {
     redirect,
-    sessionToken: token,
-    isNewUser: isNew,
-    ...(flash ? { flash } : {}),
-    // The client shows a one-time acceptance step when the published versions
-    // have moved on since this user last agreed.
-    ...(requiresConsent ? { requiresConsent: true } : {}),
-    ...(reconsented && !isNew ? { reconsented: true } : {}),
+    isNew,
+    flash,
+    requiresConsent,
   });
+});
+
+// POST /auth/2fa/verify — the second step when two-factor is enabled.
+router.post('/auth/2fa/verify', (req, res) => {
+  const mfaToken = String(req.body?.mfaToken ?? '');
+  const code = String(req.body?.code ?? '').trim();
+
+  const challenge = mfaStore.byToken(mfaToken);
+  if (!challenge) {
+    res.status(422).json({ ok: false, error: SECOND_FACTOR_ERROR });
+    return;
+  }
+
+  const email = challenge.email;
+
+  if (challenge.consumedAt !== null || challenge.expiresAt < Date.now()) {
+    mfaStore.delete(challenge.id);
+    res.status(422).json({ ok: false, error: SECOND_FACTOR_ERROR });
+    return;
+  }
+  if (challenge.attempts >= MAX_ATTEMPTS) {
+    mfaStore.delete(challenge.id);
+    res.status(422).json({ ok: false, error: SECOND_FACTOR_ERROR });
+    return;
+  }
+
+  // Failures only — a successful second factor must not consume the budget.
+  const limit = secondFactorLimited(email);
+  if (limit.limited) {
+    res.status(429).json({ ok: false, retryAfter: limit.retryAfter });
+    return;
+  }
+
+  const user = userStore.get(email);
+  if (!user) {
+    mfaStore.delete(challenge.id);
+    res.status(422).json({ ok: false, error: SECOND_FACTOR_ERROR });
+    return;
+  }
+
+  const verdict = verifySecondFactor(user, code);
+
+  if (!verdict.ok) {
+    challenge.attempts += 1;
+    secondFactorFailed(email);
+    if (challenge.attempts >= MAX_ATTEMPTS) mfaStore.delete(challenge.id);
+    audit.record({
+      action: 'login.2fa_failed',
+      outcome: 'failure',
+      actor: email,
+      target: email,
+      ...requestMeta(req),
+    });
+    res.status(422).json({ ok: false, error: SECOND_FACTOR_ERROR });
+    return;
+  }
+
+  userStore.put(email, verdict.user);
+  mfaStore.delete(challenge.id);
+
+  finishLogin(
+    req,
+    res,
+    email,
+    ['email_otp', verdict.method],
+    { redirect: '/profile' },
+    { skipMfa: true },
+  );
 });
 
 // POST /auth/otp/resend — refresh the SAME challenge after the cooldown.
@@ -220,7 +436,7 @@ router.post('/auth/otp/resend', async (req, res) => {
   challenge.attempts = 0;
   challengeStore.set(requestId, challenge);
 
-  console.log(`[mail] sent a verification code to ${email}`);
+  sendMail(email, 'Your one-time verification code', `Your code is ${code}. It expires in 10 minutes.`);
 
   hit(`cooldown:${email}`, RESEND_COOLDOWN_S * 1000);
   hit(`send:email:${email}`, HOUR);
@@ -228,12 +444,633 @@ router.post('/auth/otp/resend', async (req, res) => {
   res.json({ ok: true, resendAfter: RESEND_COOLDOWN_S, message: 'A new code has been sent.' });
 });
 
-// POST /auth/logout
+// POST /auth/logout — revoke this session only.
 router.post('/auth/logout', (req, res) => {
-  const header = req.get('authorization') ?? '';
-  const token = header.startsWith('Bearer ') ? header.slice('Bearer '.length) : '';
-  if (token) sessionStore.destroy(token);
+  const token = bearer(req);
+  if (token) {
+    const session = sessionStore.sessionFor(token);
+    sessionStore.revokeByToken(token, 'logout');
+    if (session) {
+      audit.record({
+        action: 'logout',
+        actor: session.email,
+        target: session.email,
+        ...requestMeta(req),
+        meta: { sessionId: session.id },
+      });
+    }
+  }
   res.json({ ok: true });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Profile
+// ─────────────────────────────────────────────────────────────────────────────
+
+router.get('/profile', (req, res) => {
+  const session = currentSession(req);
+  if (!session) {
+    res.redirect('/sign-in');
+    return;
+  }
+
+  const user = userStore.get(session.email);
+  if (!user) {
+    res.redirect('/sign-in');
+    return;
+  }
+
+  res.type('html').send(
+    renderProfilePage({
+      user,
+      sessions: sessionStore.list(user.email),
+      currentSessionId: session.id,
+      policy: getPolicy(),
+      effectiveDays: effectiveDays(user),
+      history: audit.securityHistory(user.email, 25),
+      ...(pendingEmailChangeFor(user.email) ? { pendingChange: pendingEmailChangeFor(user.email) } : {}),
+      recoveryCodesRemaining: user.recoveryCodes.filter((c) => c.usedAt === null).length,
+    }),
+  );
+});
+
+// PATCH /profile/session-days — "keep me signed in for N days" (null = default).
+router.patch('/profile/session-days', (req, res) => {
+  const session = requireSession(req, res);
+  if (!session) return;
+
+  const user = userStore.get(session.email);
+  if (!user) {
+    res.status(401).json({ ok: false, error: 'Please sign in again.' });
+    return;
+  }
+
+  const policy = getPolicy();
+  if (!policy.allowUserOverride) {
+    res.status(403).json({
+      ok: false,
+      error: 'Your administrator sets the login duration for all accounts.',
+    });
+    return;
+  }
+
+  const raw = req.body?.days;
+  let days: number | null;
+  if (raw === null || raw === undefined || raw === '') {
+    days = null;
+  } else if (typeof raw !== 'number' || !Number.isInteger(raw)) {
+    res.status(422).json({ ok: false, error: 'Choose a whole number of days.' });
+    return;
+  } else if (raw < policy.minDays || raw > policy.maxDays) {
+    res.status(422).json({
+      ok: false,
+      error: `Choose between ${policy.minDays} and ${policy.maxDays} days.`,
+    });
+    return;
+  } else {
+    days = raw;
+  }
+
+  userStore.put(user.email, { ...user, sessionDays: days });
+  audit.record({
+    action: 'session.duration_changed',
+    actor: user.email,
+    target: user.email,
+    ...requestMeta(req),
+    meta: { days: days ?? 'default' },
+  });
+
+  res.json({ ok: true, days, effectiveDays: effectiveDays({ sessionDays: days }) });
+});
+
+// POST /profile/sessions/:id/revoke — sign a device out.
+router.post('/profile/sessions/:id/revoke', (req, res) => {
+  const session = requireSession(req, res);
+  if (!session) return;
+
+  const target = sessionStore.byId(String(req.params.id));
+  if (!target || target.email !== session.email) {
+    res.status(404).json({ ok: false, error: 'Session not found.' });
+    return;
+  }
+
+  sessionStore.revoke(target.id, 'user_revoked');
+  audit.record({
+    action: 'session.revoked',
+    actor: session.email,
+    target: session.email,
+    ...requestMeta(req),
+    meta: { sessionId: target.id, device: target.deviceLabel },
+  });
+
+  res.json({ ok: true });
+});
+
+// POST /profile/sessions/revoke-others — sign every other device out.
+router.post('/profile/sessions/revoke-others', (req, res) => {
+  const session = requireSession(req, res);
+  if (!session) return;
+
+  const count = sessionStore.revokeAll(session.email, {
+    exceptSessionId: session.id,
+    reason: 'user_revoked_all',
+  });
+
+  audit.record({
+    action: 'session.revoke_all',
+    actor: session.email,
+    target: session.email,
+    ...requestMeta(req),
+    meta: { count },
+  });
+
+  res.json({ ok: true, count });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Two-factor (user controlled)
+// ─────────────────────────────────────────────────────────────────────────────
+
+router.post('/profile/2fa/start', (req, res) => {
+  const session = requireSession(req, res);
+  if (!session) return;
+
+  const user = userStore.get(session.email);
+  if (!user) {
+    res.status(401).json({ ok: false, error: 'Please sign in again.' });
+    return;
+  }
+  if (isTwoFactorEnabled(user)) {
+    res.status(409).json({ ok: false, error: 'Two-factor is already on.' });
+    return;
+  }
+
+  const { user: updated, secret, uri } = beginEnrollment(user);
+  userStore.put(user.email, updated);
+  audit.record({
+    action: 'twofactor.enroll_started',
+    actor: user.email,
+    target: user.email,
+    ...requestMeta(req),
+  });
+
+  res.json({ ok: true, secret, uri });
+});
+
+router.post('/profile/2fa/confirm', (req, res) => {
+  const session = requireSession(req, res);
+  if (!session) return;
+
+  const user = userStore.get(session.email);
+  if (!user) {
+    res.status(401).json({ ok: false, error: 'Please sign in again.' });
+    return;
+  }
+
+  const budget = secondFactorLimited(user.email);
+  if (budget.limited) {
+    res.status(429).json({ ok: false, error: 'Too many attempts. Try again later.' });
+    return;
+  }
+
+  const result = confirmEnrollment(user, String(req.body?.code ?? '').trim());
+  userStore.put(user.email, result.user);
+
+  if (!result.ok) {
+    secondFactorFailed(user.email);
+    // A failed setup is not a security event on the account yet, but the state
+    // change (expired pending secret) must still be persisted.
+    res.status(422).json({ ok: false, error: result.error });
+    return;
+  }
+
+  audit.record({
+    action: 'twofactor.enabled',
+    actor: user.email,
+    target: user.email,
+    ...requestMeta(req),
+  });
+
+  res.json({ ok: true, recoveryCodes: result.recoveryCodes });
+});
+
+router.post('/profile/2fa/disable', (req, res) => {
+  const session = requireSession(req, res);
+  if (!session) return;
+
+  const user = userStore.get(session.email);
+  if (!user) {
+    res.status(401).json({ ok: false, error: 'Please sign in again.' });
+    return;
+  }
+
+  const budget = secondFactorLimited(user.email);
+  if (budget.limited) {
+    res.status(429).json({ ok: false, error: 'Too many attempts. Try again later.' });
+    return;
+  }
+
+  const result = disableTwoFactor(user, String(req.body?.code ?? '').trim());
+  if (!result.ok) {
+    secondFactorFailed(user.email);
+    res.status(422).json({ ok: false, error: result.error });
+    return;
+  }
+
+  userStore.put(user.email, result.user);
+  audit.record({
+    action: 'twofactor.disabled',
+    actor: user.email,
+    target: user.email,
+    ...requestMeta(req),
+  });
+
+  res.json({ ok: true });
+});
+
+router.post('/profile/2fa/recovery-codes', (req, res) => {
+  const session = requireSession(req, res);
+  if (!session) return;
+
+  const user = userStore.get(session.email);
+  if (!user) {
+    res.status(401).json({ ok: false, error: 'Please sign in again.' });
+    return;
+  }
+
+  const budget = secondFactorLimited(user.email);
+  if (budget.limited) {
+    res.status(429).json({ ok: false, error: 'Too many attempts. Try again later.' });
+    return;
+  }
+
+  const result = regenerateRecoveryCodes(user, String(req.body?.code ?? '').trim());
+  if (!result.ok) {
+    secondFactorFailed(user.email);
+    res.status(422).json({ ok: false, error: result.error });
+    return;
+  }
+
+  userStore.put(user.email, result.user);
+  audit.record({
+    action: 'twofactor.recovery_regenerated',
+    actor: user.email,
+    target: user.email,
+    ...requestMeta(req),
+  });
+
+  res.json({ ok: true, recoveryCodes: result.recoveryCodes });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Login email change
+// ─────────────────────────────────────────────────────────────────────────────
+
+router.post('/profile/email/request', async (req, res) => {
+  const session = requireSession(req, res);
+  if (!session) return;
+
+  const user = userStore.get(session.email);
+  if (!user) {
+    res.status(401).json({ ok: false, error: 'Please sign in again.' });
+    return;
+  }
+
+  const limit = tooMany(`emailchange:${user.email}`, EMAIL_CHANGE_LIMIT, HOUR);
+  if (limit.limited) {
+    res.status(429).json({ ok: false, error: 'Too many change requests. Try again later.' });
+    return;
+  }
+
+  // Step-up: with 2FA on, a current code is required before we will mail a new
+  // address. Without 2FA the session itself is the proof (it came from the inbox).
+  if (isTwoFactorEnabled(user)) {
+    const budget = secondFactorLimited(user.email);
+    if (budget.limited) {
+      res.status(429).json({ ok: false, error: 'Too many attempts. Try again later.' });
+      return;
+    }
+
+    const verdict = verifySecondFactor(user, String(req.body?.code ?? '').trim());
+    if (!verdict.ok) {
+      secondFactorFailed(user.email);
+      res.status(422).json({ ok: false, error: 'Enter a current authenticator or recovery code.' });
+      return;
+    }
+    userStore.put(user.email, verdict.user);
+  }
+
+  const result = await startEmailChange(user, String(req.body?.newEmail ?? ''), requestMeta(req));
+  if (!result.ok) {
+    res.status(422).json({ ok: false, error: result.error, ...(result.field ? { field: result.field } : {}) });
+    return;
+  }
+
+  hit(`emailchange:${user.email}`, HOUR);
+
+  // Prove the new address; warn the old one. The raw code never leaves this
+  // function except into the mail payload.
+  sendMail(
+    result.newEmail,
+    'Confirm your new login email',
+    `Your confirmation code is ${result.code}. It expires in 10 minutes.`,
+  );
+  sendMail(
+    user.email,
+    'Your login email is being changed',
+    `A change to ${result.newEmail} was requested. If this was not you, sign out all devices and contact support.`,
+  );
+
+  audit.record({
+    action: 'email.change_requested',
+    actor: user.email,
+    target: user.email,
+    ...requestMeta(req),
+    meta: { newEmail: result.newEmail },
+  });
+
+  res.json({
+    ok: true,
+    pending: result.newEmail,
+    expiresAt: result.request.expiresAt,
+  });
+});
+
+router.post('/profile/email/confirm', async (req, res) => {
+  const session = requireSession(req, res);
+  if (!session) return;
+
+  const pending = pendingEmailChangeFor(session.email);
+  if (!pending) {
+    res.status(422).json({ ok: false, error: 'No email change is pending.' });
+    return;
+  }
+
+  const result = await confirmEmailChange(pending.id, String(req.body?.code ?? '').trim());
+  if (!result.ok) {
+    res.status(422).json({ ok: false, error: result.error });
+    return;
+  }
+
+  // Move sessions to the new address, then revoke every other device and rotate
+  // this one — an email change is a credential change.
+  const oldEmail = result.oldEmail;
+  sessionStore.moveEmail(oldEmail, result.newEmail);
+  sessionStore.revokeAll(result.newEmail, {
+    exceptSessionId: session.id,
+    reason: 'email_changed',
+  });
+  sessionStore.revoke(session.id, 'email_changed');
+
+  const meta = requestMeta(req);
+  const days = effectiveDays(result.user);
+  const { token, session: rotated } = sessionStore.create(
+    result.newEmail,
+    meta,
+    days * DAY_MS,
+    [...session.methods, 'email_changed'],
+  );
+
+  audit.record({
+    action: 'email.changed',
+    actor: oldEmail,
+    target: result.newEmail,
+    ...meta,
+    meta: { oldEmail, newEmail: result.newEmail, sessionId: rotated.id },
+  });
+
+  sendMail(
+    oldEmail,
+    'Your login email was changed',
+    `The account now signs in with ${result.newEmail}. If this was not you, contact support immediately.`,
+  );
+
+  res.json({ ok: true, email: result.newEmail, sessionToken: token, sessionDays: days });
+});
+
+router.post('/profile/email/cancel', (req, res) => {
+  const session = requireSession(req, res);
+  if (!session) return;
+
+  const pending = pendingEmailChangeFor(session.email);
+  if (pending) emailChangeStore.delete(pending.id);
+
+  audit.record({
+    action: 'email.change_cancelled',
+    actor: session.email,
+    target: session.email,
+    ...requestMeta(req),
+  });
+
+  res.json({ ok: true });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Admin
+// ─────────────────────────────────────────────────────────────────────────────
+
+router.get('/admin', (req, res) => {
+  const session = currentSession(req);
+  if (!session) {
+    res.redirect('/sign-in');
+    return;
+  }
+  const user = userStore.get(session.email);
+  if (!isAdmin(user)) {
+    res.status(403).send('Administrator access required.');
+    return;
+  }
+
+  const rows = userStore.all().map((u) => {
+    const sessions = sessionStore.list(u.email, { includeRevoked: true });
+    const live = sessions.filter((s) => isLive(s));
+    return {
+      user: u,
+      activeSessions: live.length,
+      lastSeenAt: live.length ? Math.max(...live.map((s) => s.lastSeenAt)) : null,
+    };
+  });
+
+  res.type('html').send(
+    renderAdminPage({
+      policy: getPolicy(),
+      users: rows,
+      totals: {
+        users: rows.length,
+        admins: rows.filter((r) => r.user.role === 'admin').length,
+        twoFactor: rows.filter((r) => r.user.twoFactorEnabledAt !== null).length,
+        sessions: rows.reduce((sum, r) => sum + r.activeSessions, 0),
+      },
+    }),
+  );
+});
+
+router.get('/admin/users/:email', (req, res) => {
+  const session = currentSession(req);
+  const adminUser = session ? userStore.get(session.email) : undefined;
+  if (!session || !isAdmin(adminUser)) {
+    if (!session) res.redirect('/sign-in');
+    else res.status(403).send('Administrator access required.');
+    return;
+  }
+
+  const email = normalizeEmail(String(req.params.email));
+  const user = userStore.get(email);
+  if (!user) {
+    res.status(404).send('User not found.');
+    return;
+  }
+
+  audit.record({
+    action: 'admin.user_viewed',
+    actor: session.email,
+    target: user.email,
+    ...requestMeta(req),
+  });
+
+  res.type('html').send(
+    renderAdminUserPage({
+      user,
+      policy: getPolicy(),
+      effectiveDays: effectiveDays(user),
+      sessions: sessionStore.list(user.email, { includeRevoked: true }),
+      history: audit.loginHistory(user.email, 50),
+      events: audit
+        .forUser(user.email, 100)
+        .filter((e) => e.action.startsWith('email.') || e.action.startsWith('admin.')),
+      ...(pendingEmailChangeFor(user.email) ? { pendingChange: pendingEmailChangeFor(user.email) } : {}),
+    }),
+  );
+});
+
+router.patch('/admin/settings', (req, res) => {
+  const session = requireAdmin(req, res);
+  if (!session) return;
+
+  const body = req.body ?? {};
+  const patch: PolicyPatch = {};
+  for (const key of ['defaultDays', 'minDays', 'maxDays'] as const) {
+    if (body[key] !== undefined) patch[key] = Number(body[key]);
+  }
+  if (body.allowUserOverride !== undefined) patch.allowUserOverride = Boolean(body.allowUserOverride);
+  if (body.idleDays !== undefined) {
+    patch.idleDays = body.idleDays === null || body.idleDays === '' ? null : Number(body.idleDays);
+  }
+
+  const before = getPolicy();
+  const result = updatePolicy(patch);
+  if (!result.ok) {
+    res.status(422).json({ ok: false, error: result.error, field: result.field });
+    return;
+  }
+
+  audit.record({
+    action: 'admin.policy_changed',
+    actor: session.email,
+    target: session.email,
+    ...requestMeta(req),
+    meta: {
+      before: JSON.stringify(before),
+      after: JSON.stringify(result.policy),
+    },
+  });
+
+  res.json({ ok: true, policy: result.policy });
+});
+
+router.patch('/admin/users/:email/session-days', (req, res) => {
+  const session = requireAdmin(req, res);
+  if (!session) return;
+
+  const user = userStore.get(normalizeEmail(String(req.params.email)));
+  if (!user) {
+    res.status(404).json({ ok: false, error: 'User not found.' });
+    return;
+  }
+
+  const policy = getPolicy();
+  const raw = req.body?.days;
+  let days: number | null;
+
+  if (raw === null || raw === undefined || raw === '') {
+    days = null;
+  } else if (typeof raw !== 'number' || !Number.isInteger(raw)) {
+    res.status(422).json({ ok: false, error: 'Choose a whole number of days.' });
+    return;
+  } else if (raw < policy.minDays || raw > policy.maxDays) {
+    res.status(422).json({
+      ok: false,
+      error: `Choose between ${policy.minDays} and ${policy.maxDays} days.`,
+    });
+    return;
+  } else {
+    days = raw;
+  }
+
+  userStore.put(user.email, { ...user, sessionDays: days });
+
+  audit.record({
+    action: 'admin.user_session_days_changed',
+    actor: session.email,
+    target: user.email,
+    ...requestMeta(req),
+    meta: { days: days ?? 'default' },
+  });
+
+  res.json({ ok: true, days, effectiveDays: effectiveDays({ sessionDays: days }) });
+});
+
+router.post('/admin/users/:email/sessions/:id/revoke', (req, res) => {
+  const session = requireAdmin(req, res);
+  if (!session) return;
+
+  const user = userStore.get(normalizeEmail(String(req.params.email)));
+  const target = sessionStore.byId(String(req.params.id));
+  if (!user || !target || target.email !== user.email) {
+    res.status(404).json({ ok: false, error: 'Session not found.' });
+    return;
+  }
+
+  sessionStore.revoke(target.id, 'admin_revoked');
+
+  audit.record({
+    action: 'admin.user_session_revoked',
+    actor: session.email,
+    target: user.email,
+    ...requestMeta(req),
+    meta: { sessionId: target.id, device: target.deviceLabel },
+  });
+
+  res.json({ ok: true });
+});
+
+router.post('/admin/users/:email/2fa/reset', (req, res) => {
+  const session = requireAdmin(req, res);
+  if (!session) return;
+
+  const user = userStore.get(normalizeEmail(String(req.params.email)));
+  if (!user) {
+    res.status(404).json({ ok: false, error: 'User not found.' });
+    return;
+  }
+  if (!isTwoFactorEnabled(user)) {
+    res.status(409).json({ ok: false, error: 'Two-factor is not enabled for this user.' });
+    return;
+  }
+
+  userStore.put(user.email, forceDisableTwoFactor(user));
+  // Removing a factor changes who can log in — invalidate every session.
+  const count = sessionStore.revokeAll(user.email, { reason: 'admin_2fa_reset' });
+
+  audit.record({
+    action: 'admin.twofactor_reset',
+    actor: session.email,
+    target: user.email,
+    ...requestMeta(req),
+    meta: { sessionsRevoked: count },
+  });
+
+  res.json({ ok: true, sessionsRevoked: count });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -242,11 +1079,8 @@ router.post('/auth/logout', (req, res) => {
 
 // POST /auth/biometric/enroll — AUTHENTICATED: stores a device public key.
 router.post('/auth/biometric/enroll', (req, res) => {
-  const email = requireAuth(req);
-  if (!email) {
-    res.status(401).json({ ok: false, error: 'Authentication required.' });
-    return;
-  }
+  const session = requireSession(req, res);
+  if (!session) return;
 
   const publicKeyPem = String(req.body?.publicKey ?? '');
   const deviceId = String(req.body?.deviceId ?? '');
@@ -256,23 +1090,27 @@ router.post('/auth/biometric/enroll', (req, res) => {
     return;
   }
 
-  if (deviceStore.list(email).length >= MAX_DEVICES_PER_ACCOUNT) {
+  if (deviceStore.list(session.email).length >= MAX_DEVICES_PER_ACCOUNT) {
     res.status(422).json({ ok: false, error: 'Device limit reached.' });
     return;
   }
 
-  deviceStore.add(email, { userId: email, publicKeyPem, deviceId, label, lastUsedAt: null });
+  deviceStore.add(session.email, {
+    userId: session.email,
+    publicKeyPem,
+    deviceId,
+    label,
+    lastUsedAt: null,
+  });
   res.json({ ok: true });
 });
 
 // POST /auth/biometric/revoke — AUTHENTICATED: removes a device public key.
 router.post('/auth/biometric/revoke', (req, res) => {
-  const email = requireAuth(req);
-  if (!email) {
-    res.status(401).json({ ok: false, error: 'Authentication required.' });
-    return;
-  }
-  deviceStore.remove(email, String(req.body?.deviceId ?? ''));
+  const session = requireSession(req, res);
+  if (!session) return;
+
+  deviceStore.remove(session.email, String(req.body?.deviceId ?? ''));
   res.json({ ok: true });
 });
 
@@ -284,7 +1122,7 @@ router.post('/auth/biometric/challenge', (_req, res) => {
 
 // POST /auth/biometric/verify — verify the signature against any enrolled key.
 router.post('/auth/biometric/verify', (req, res) => {
-  const email = normalize(String(req.body?.email ?? ''));
+  const email = normalizeEmail(String(req.body?.email ?? ''));
   const challengeId = String(req.body?.challengeId ?? '');
   const signature = String(req.body?.signature ?? '');
 
@@ -304,11 +1142,10 @@ router.post('/auth/biometric/verify', (req, res) => {
     return;
   }
 
-  const token = sessionStore.create(email);
-  res.json({ ok: true, redirect: '/dashboard', sessionToken: token });
+  // Possession (device key) + inherence (biometric) is already two factors, so
+  // this path satisfies MFA on its own. See references/session-management.md.
+  finishLogin(req, res, email, ['biometric'], { redirect: '/profile' }, { skipMfa: true });
 });
-
-// ─────────────────────────────────────────────────────────────────────────────
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Social login (OAuth 2.0 / OpenID Connect)
@@ -367,13 +1204,20 @@ router.get('/auth/social/:provider/callback', async (req, res) => {
 
   // Reconcile with the local store. In production: look up an existing account
   // by verified email and by (provider, provider_user_id), then decideAccountAction,
-  // persist the link, and establish the session (first login → /profile/edit).
+  // persist the link, and establish the session **via finishLogin()** so the
+  // user's 2FA setting is enforced here too — a social callback must never be a
+  // way around the second factor.
   const action = decideAccountAction(identity, false, false);
 
   res.json({ ok: true, identity, action });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+
+/** Replace with your transactional mail provider. Never log the code itself. */
+function sendMail(to: string, subject: string, _body: string): void {
+  console.log(`[mail] ${subject} → ${to}`);
+}
 
 async function issueAndSend(
   email: string,
@@ -394,7 +1238,6 @@ async function issueAndSend(
     consent,
   });
 
-  // Replace with your transactional mail provider. Do NOT log the code itself.
-  console.log(`[mail] sent a verification code to ${email}`);
+  sendMail(email, 'Your one-time verification code', `Your code is ${code}. It expires in 10 minutes.`);
   return requestId;
 }

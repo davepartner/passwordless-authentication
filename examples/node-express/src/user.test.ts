@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   completeLogin,
   DEFAULT_REDIRECT,
-  PROFILE_EDIT_REDIRECT,
+  PROFILE_REDIRECT,
   WELCOME_FLASH,
 } from './user.js';
 import { userStore } from './store.js';
@@ -23,7 +23,7 @@ test('first-time login is sent to profile edit with a welcome flash', () => {
   const outcome = completeLogin(email, consent());
 
   assert.equal(outcome.isNew, true);
-  assert.equal(outcome.redirect, PROFILE_EDIT_REDIRECT);
+  assert.equal(outcome.redirect, PROFILE_REDIRECT);
   assert.equal(outcome.flash, WELCOME_FLASH);
 
   // The account exists and is marked email-verified.

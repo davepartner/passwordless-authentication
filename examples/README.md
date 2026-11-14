@@ -11,7 +11,7 @@ shows one way to implement them.
 
 | Example | Stack | What it demonstrates |
 |---------|-------|----------------------|
-| `node-express/` | TypeScript + Express | The email-OTP backend (`request` / `verify` / `resend` / `logout`) plus the **server side** of biometric login (`enroll` / `revoke` / `challenge` / `verify`), the **Terms + Privacy acceptance** flow, and real `/terms` and `/privacy` pages with a pre-checked `/sign-in` form. Includes unit tests for the OTP, rate-limiter, and consent primitives. |
+| `node-express/` | TypeScript + Express | The email-OTP backend (`request` / `verify` / `resend` / `logout`), the **Terms + Privacy acceptance** flow with real `/terms` and `/privacy` pages, **TOTP two-factor**, **one-year policy sessions** with a device list, **verified email changes**, the **admin console + audit log**, and the **server side** of biometric login. Includes unit tests for the OTP, rate-limiter, consent, TOTP, session-policy, and profile primitives, plus HTTP integration tests. |
 | `ios-faceid/` | Swift | The **client side** of Face ID: generate a Secure-Enclave key, and sign a server challenge. |
 | `android-biometric/` | Kotlin | The **client side** of biometric login: a Keystore key gated by biometrics, and signing via `BiometricPrompt`. |
 
@@ -30,6 +30,13 @@ only**, **authenticated** biometric enrollment, and an expiring/revocable sessio
 - **Legal acceptance** → `node-express/src/consent.ts` (validation, versions, merge) and
   `node-express/src/legal-pages.ts` (the served `/terms` and `/privacy` documents) implement
   `references/legal-consent.md`; `node-express/src/views.ts` renders the pre-checked form.
+- **Two-factor** → `src/totp.ts` (RFC 6238 on node:crypto) + `src/twofactor.ts` implement
+  `references/two-factor.md`; the second step lives in `views.ts`, enrollment in `views-profile.ts`.
+- **Sessions & devices** → `src/sessionPolicy.ts` (the one-year default and the admin band) and the
+  `sessionStore` in `src/store.ts` implement `references/session-management.md`.
+- **Email changes** → `src/emailChange.ts` implements `references/email-change.md`.
+- **Admin & audit** → `src/{audit,roles}.ts` + `src/views-admin.ts` implement
+  `references/admin-and-audit.md`.
 
 ## Interop notes (important)
 

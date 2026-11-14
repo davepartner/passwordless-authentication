@@ -1,134 +1,117 @@
 /**
  * The sign-in / registration screen — the one place the acceptance checkboxes
- * appear. Plain server-rendered HTML + a little fetch(), no framework, so the
- * behaviour is readable regardless of your stack.
+ * appear, plus the optional second-factor step.
  *
- * Both boxes are rendered **checked by default**, the labels link to the real
- * served documents in new tabs (so a half-completed form is not lost), and both
- * are still required: unchecking either blocks submission client-side *and* the
- * server rejects the request without an explicit acceptance.
+ * Plain server-rendered HTML + a little fetch(), no framework, so the behaviour
+ * is readable regardless of your stack.
+ *
+ * Both consent boxes are rendered **checked by default**, the labels link to the
+ * real served documents in new tabs (so a half-completed form is not lost), and
+ * both are still required: unchecking either blocks submission client-side *and*
+ * the server rejects the request without an explicit acceptance.
  */
 
 import { PRIVACY_PATH, TERMS_PATH } from './consent.js';
+import { CLIENT_HELPERS, layout } from './ui.js';
 
-const STYLES = `
-  :root { color-scheme: light dark; --accent: #1f6feb; }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 2rem 1.25rem;
-    font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #1a1a1a; background: #f6f7f9;
-  }
-  @media (prefers-color-scheme: dark) {
-    body { color: #e8e8e8; background: #101014; }
-    .card { background: #17171d; border-color: #2a2a33; }
-    input[type=email], input[type=text] { background: #101014; border-color: #3a3a45; color: inherit; }
-  }
-  .card { width: 100%; max-width: 26rem; background: #fff; border: 1px solid #e3e5e8; border-radius: 14px; padding: 1.75rem; }
-  h1 { font-size: 1.4rem; margin: 0 0 .25rem; }
-  .sub { margin: 0 0 1.5rem; font-size: .92rem; opacity: .75; }
-  label.field { display: block; font-weight: 600; font-size: .88rem; margin-bottom: .4rem; }
-  input[type=email], input[type=text] {
-    width: 100%; padding: .8rem .85rem; font: inherit; border: 1px solid #cfd3d8; border-radius: 10px;
-  }
-  input[type=email]:focus-visible, input[type=text]:focus-visible, button:focus-visible, input[type=checkbox]:focus-visible {
-    outline: 2px solid var(--accent); outline-offset: 2px;
-  }
-  .hint { font-size: .82rem; opacity: .7; margin: .35rem 0 0; min-height: 1.2em; }
-  fieldset { border: 0; padding: 0; margin: 1.35rem 0 .25rem; }
-  .consent { display: flex; gap: .6rem; align-items: flex-start; font-size: .88rem; margin: 0 0 .7rem; }
-  .consent input { width: 1.15rem; height: 1.15rem; margin: .18rem 0 0; flex: none; accent-color: var(--accent); }
-  .consent + .consent { margin-bottom: 0; }
-  button {
-    width: 100%; margin-top: 1.35rem; padding: .85rem 1rem; font: inherit; font-weight: 600;
-    color: #fff; background: var(--accent); border: 0; border-radius: 10px; cursor: pointer; min-height: 48px;
-  }
-  button[disabled] { opacity: .5; cursor: not-allowed; }
-  button.secondary { background: transparent; color: inherit; border: 1px solid currentColor; }
-  .error { color: #b3261e; font-size: .88rem; margin: .9rem 0 0; min-height: 1.2em; }
-  @media (prefers-color-scheme: dark) { .error { color: #ff8b82; } }
-  .banner { border: 1px solid #cfd3d8; border-radius: 10px; padding: .75rem .85rem; font-size: .86rem; margin: 0 0 1.25rem; }
-  .hidden { display: none !important; }
-  .foot { margin: 1.5rem 0 0; font-size: .8rem; opacity: .7; text-align: center; }
-  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+const FORM_CSS = `
+  .auth { max-width: 26rem; margin: 0 auto; }
+  .auth .card { padding: 1.5rem; }
+  .helper { font-size: .82rem; color: var(--muted); margin: .35rem 0 0; min-height: 1.2em; }
+  .consent { display: flex; gap: .6rem; align-items: flex-start; font-size: .88rem; margin: .6rem 0; }
+  .consent input { margin-top: .18rem; flex: none; }
+  .banner { border: 1px solid var(--line); border-radius: 10px; padding: .7rem .8rem; font-size: .86rem; margin: 0 0 1rem; }
+  .mt { margin-top: 1rem; }
+  .foot { margin: 1.5rem 0 0; font-size: .8rem; color: var(--muted); text-align: center; }
 `;
 
 export function renderSignInPage(): string {
-  return `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Sign in</title>
-  <style>${STYLES}</style>
-</head>
-<body>
-<main class="card">
-  <h1>Sign in or create an account</h1>
-  <p class="sub">One email. One code. No password.</p>
+  const body = `<div class="auth">
+  <div class="card">
+    <h1>Sign in or create an account</h1>
+    <p class="muted">One email. One code. No password.</p>
 
-  <!-- Step 1 — request -->
-  <form id="request-form" novalidate>
-    <label class="field" for="email">Email address</label>
-    <input id="email" name="email" type="email" autocomplete="email" inputmode="email"
-           required autofocus aria-describedby="email-hint">
-    <p class="hint" id="email-hint" aria-live="polite">Enter a valid email to continue.</p>
+    <form id="request-form" novalidate>
+      <label class="field" for="email">Email address</label>
+      <input id="email" name="email" type="email" autocomplete="email" inputmode="email"
+             required autofocus aria-describedby="email-hint">
+      <p class="helper" id="email-hint" aria-live="polite">Enter a valid email to continue.</p>
 
-    <fieldset>
-      <legend class="field">Before you continue</legend>
+      <fieldset style="border:0;padding:0;margin:1.1rem 0 .25rem">
+        <legend class="field">Before you continue</legend>
 
-      <div class="consent">
-        <input id="accepted-terms" name="acceptedTerms" type="checkbox" checked required>
-        <label for="accepted-terms">I agree to the
-          <a href="${TERMS_PATH}" target="_blank" rel="noopener">Terms of Service</a>.</label>
-      </div>
+        <div class="consent">
+          <input id="accepted-terms" name="acceptedTerms" type="checkbox" checked required>
+          <label for="accepted-terms">I agree to the
+            <a href="${TERMS_PATH}" target="_blank" rel="noopener">Terms of Service</a>.</label>
+        </div>
 
-      <div class="consent">
-        <input id="accepted-privacy" name="acceptedPrivacy" type="checkbox" checked required>
-        <label for="accepted-privacy">I have read and accept the
-          <a href="${PRIVACY_PATH}" target="_blank" rel="noopener">Privacy Policy</a>.</label>
-      </div>
-    </fieldset>
+        <div class="consent">
+          <input id="accepted-privacy" name="acceptedPrivacy" type="checkbox" checked required>
+          <label for="accepted-privacy">I have read and accept the
+            <a href="${PRIVACY_PATH}" target="_blank" rel="noopener">Privacy Policy</a>.</label>
+        </div>
+      </fieldset>
 
-    <button id="request-submit" type="submit">Continue</button>
-    <p class="error" id="request-error" role="alert"></p>
-  </form>
+      <button id="request-submit" class="btn mt" type="submit" style="width:100%">Continue</button>
+      <p class="error" id="request-error" role="alert"></p>
+    </form>
 
-  <!-- Step 2 — verify -->
-  <form id="verify-form" class="hidden" novalidate>
-    <p class="banner" role="status">Please check your inbox <strong>and your spam/junk
-      folder</strong>. Still nothing after about a minute? Request a new code.</p>
+    <form id="verify-form" class="hidden" novalidate>
+      <p class="banner" role="status">Please check your inbox <strong>and your spam/junk
+        folder</strong>. Still nothing after about a minute? Request a new code.</p>
 
-    <label class="field" for="code">Enter the 8-digit code we sent to <span id="sent-to"></span></label>
-    <input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code"
-           pattern="[0-9]*" maxlength="8" required aria-describedby="verify-error">
+      <label class="field" for="code">Enter the 8-digit code we sent to <span id="sent-to"></span></label>
+      <input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code"
+             pattern="[0-9]*" maxlength="8" required>
 
-    <button id="verify-submit" type="submit">Sign in</button>
-    <button id="resend" class="secondary" type="button" disabled>Resend code in 30s</button>
-    <p class="error" id="verify-error" role="alert"></p>
-  </form>
+      <button id="verify-submit" class="btn mt" type="submit" style="width:100%">Sign in</button>
+      <button id="resend" class="btn btn-secondary mt" type="button" style="width:100%" disabled>
+        Resend code in 30s</button>
+      <p class="error" id="verify-error" role="alert"></p>
+      <p class="helper"><a href="#" id="restart">Use a different email</a></p>
+    </form>
 
-  <p class="foot">Trouble signing in? <a href="mailto:support@example.com">Contact support</a>.</p>
-</main>
+    <form id="totp-form" class="hidden" novalidate>
+      <p class="banner" role="status">Two-factor authentication is on for this account. Enter the
+        6-digit code from your authenticator app — or one of your recovery codes.</p>
 
-<script>
+      <label class="field" for="totp-code">Authentication code</label>
+      <input id="totp-code" name="code" type="text" inputmode="numeric"
+             autocomplete="one-time-code" maxlength="14" required>
+
+      <button id="totp-submit" class="btn mt" type="submit" style="width:100%">Verify and sign in</button>
+      <p class="error" id="totp-error" role="alert"></p>
+      <p class="helper">Lost your device? Use a recovery code, or ask your administrator to reset
+        two-factor authentication.</p>
+    </form>
+
+    <p class="foot">Trouble signing in? <a href="mailto:support@example.com">Contact support</a>.</p>
+  </div>
+</div>`;
+
+  const script = `${CLIENT_HELPERS}
 (() => {
-  const $ = (id) => document.getElementById(id);
-  const requestForm = $('request-form');
-  const verifyForm = $('verify-form');
-  const emailInput = $('email');
-  const submit = $('request-submit');
-  const hint = $('email-hint');
-  const requestError = $('request-error');
-  const verifyError = $('verify-error');
-  const codeInput = $('code');
-  const resend = $('resend');
+  const q = (id) => document.getElementById(id);
+  const requestForm = q('request-form');
+  const verifyForm = q('verify-form');
+  const totpForm = q('totp-form');
+  const emailInput = q('email');
+  const submit = q('request-submit');
+  const hint = q('email-hint');
+  const requestError = q('request-error');
+  const verifyError = q('verify-error');
+  const totpError = q('totp-error');
+  const codeInput = q('code');
+  const totpInput = q('totp-code');
+  const resend = q('resend');
   const EMAIL_RE = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]{2,}$/;
   const CONSENT_ERROR = 'Please accept the Terms of Service and Privacy Policy to continue.';
   let requestId = null;
+  let mfaToken = null;
   let timer = null;
 
-  const consentGiven = () =>
-    $('accepted-terms').checked && $('accepted-privacy').checked;
+  const consentGiven = () => q('accepted-terms').checked && q('accepted-privacy').checked;
 
   function refresh() {
     const emailOk = EMAIL_RE.test(emailInput.value.trim());
@@ -139,8 +122,8 @@ export function renderSignInPage(): string {
       : CONSENT_ERROR;
   }
   emailInput.addEventListener('input', refresh);
-  $('accepted-terms').addEventListener('change', refresh);
-  $('accepted-privacy').addEventListener('change', refresh);
+  q('accepted-terms').addEventListener('change', refresh);
+  q('accepted-privacy').addEventListener('change', refresh);
   refresh();
 
   function startCountdown(seconds) {
@@ -156,13 +139,15 @@ export function renderSignInPage(): string {
     timer = setInterval(tick, 1000);
   }
 
-  async function post(url, body) {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    return { status: res.status, body: await res.json().catch(() => ({})) };
+  function showPanel(name) {
+    requestForm.classList.toggle('hidden', name !== 'request');
+    verifyForm.classList.toggle('hidden', name !== 'verify');
+    totpForm.classList.toggle('hidden', name !== 'totp');
+  }
+
+  function finish(data) {
+    if (data.sessionToken) sessionStorage.setItem('sessionToken', data.sessionToken);
+    window.location.assign(data.redirect || '/dashboard');
   }
 
   requestForm.addEventListener('submit', async (event) => {
@@ -171,46 +156,79 @@ export function renderSignInPage(): string {
     if (!consentGiven()) { requestError.textContent = CONSENT_ERROR; return; }
 
     submit.disabled = true;
-    const { body } = await post('/auth/otp/request', {
+    const { data } = await api('POST', '/auth/otp/request', {
       email: emailInput.value.trim(),
-      acceptedTerms: $('accepted-terms').checked,
-      acceptedPrivacy: $('accepted-privacy').checked,
+      acceptedTerms: q('accepted-terms').checked,
+      acceptedPrivacy: q('accepted-privacy').checked,
     });
 
-    if (!body.ok) {
-      requestError.textContent = body.error || 'Something went wrong. Please try again.';
+    if (!data.ok) {
+      requestError.textContent = data.error || 'Something went wrong. Please try again.';
       submit.disabled = false;
       return;
     }
 
-    requestId = body.requestId;
-    $('sent-to').textContent = emailInput.value.trim();
-    requestForm.classList.add('hidden');
-    verifyForm.classList.remove('hidden');
+    requestId = data.requestId;
+    q('sent-to').textContent = emailInput.value.trim();
+    showPanel('verify');
     codeInput.focus();
-    startCountdown(body.resendAfter ?? 30);
+    startCountdown(data.resendAfter ?? 30);
   });
 
   verifyForm.addEventListener('submit', async (event) => {
     event.preventDefault();
     verifyError.textContent = '';
-    const { body } = await post('/auth/otp/verify', { requestId, code: codeInput.value.trim() });
+    const { data } = await api('POST', '/auth/otp/verify', { requestId, code: codeInput.value.trim() });
 
-    if (!body.ok) {
-      verifyError.textContent = body.error || 'The code is invalid or has expired.';
+    if (!data.ok) {
+      verifyError.textContent = data.error || 'The code is invalid or has expired.';
       return;
     }
-    if (body.sessionToken) sessionStorage.setItem('sessionToken', body.sessionToken);
-    window.location.assign(body.redirect || '/dashboard');
+    if (data.requires2fa) {
+      mfaToken = data.mfaToken;
+      showPanel('totp');
+      totpInput.value = '';
+      totpInput.focus();
+      return;
+    }
+    finish(data);
+  });
+
+  totpForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    totpError.textContent = '';
+    const { data } = await api('POST', '/auth/2fa/verify', { mfaToken, code: totpInput.value.trim() });
+    if (!data.ok) {
+      totpError.textContent = data.error || 'That code is invalid or has expired.';
+      return;
+    }
+    finish(data);
   });
 
   resend.addEventListener('click', async () => {
-    const { body } = await post('/auth/otp/resend', { requestId });
-    if (!body.ok) { verifyError.textContent = body.error || 'Please wait before requesting a new code.'; return; }
-    startCountdown(body.resendAfter ?? 30);
+    const { data } = await api('POST', '/auth/otp/resend', { requestId });
+    if (!data.ok) { verifyError.textContent = data.error || 'Please wait before requesting a new code.'; return; }
+    startCountdown(data.resendAfter ?? 30);
   });
-})();
-</script>
-</body>
-</html>`;
+
+  q('restart').addEventListener('click', (event) => {
+    event.preventDefault();
+    requestId = null;
+    mfaToken = null;
+    verifyError.textContent = '';
+    showPanel('request');
+    submit.disabled = false;
+    refresh();
+  });
+})();`;
+
+  return layout({
+    title: 'Sign in',
+    nav: [
+      { href: '/terms', label: 'Terms' },
+      { href: '/privacy', label: 'Privacy' },
+    ],
+    body: `<style>${FORM_CSS}</style>${body}`,
+    script,
+  });
 }

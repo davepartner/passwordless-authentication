@@ -5,6 +5,24 @@ All notable changes to this skill. Pin by tag/commit when consuming.
 ## [Unreleased]
 
 ### Changes
+- **Two-factor authentication (optional, TOTP).** Users enable it from their profile; the login then
+  returns `requires2fa` + a single-use `mfaToken` instead of a session. Ten hashed single-use recovery
+  codes, a stored last-accepted time step (replay guard), a shared per-email failure budget, and an
+  audited admin reset. New `references/two-factor.md`, `src/totp.ts`, `src/twofactor.ts`, and tests
+  against the RFC 6238 vectors.
+- **Sessions now last one year by default**, driven by one policy: users choose their own inside an
+  admin band, admins set the default/ceiling/any individual user's value, and changes apply to new
+  sessions only. Session tokens are stored **hashed**; every login path issues sessions through one
+  function that enforces 2FA. New `references/session-management.md` + `src/sessionPolicy.ts`.
+- **Profile page**: login email, 2FA enrollment and recovery codes, session duration, signed-in devices
+  with per-device revocation, and a login/security history. (`src/views-profile.ts`)
+- **Verified login-email change**: code to the new address, notice to the old, step-up auth when 2FA is
+  on, all other sessions revoked, current token rotated, old address kept in history. New
+  `references/email-change.md` + `src/emailChange.ts`.
+- **Admin console + audit log**: session policy settings, user directory, per-user devices (including
+  revoked), login history, email-change log, 2FA state, per-user duration, device revocation and 2FA
+  reset — role-gated from `ADMIN_EMAILS` and audited (including `admin.user_viewed`). New
+  `references/admin-and-audit.md`, `src/{audit,roles,views-admin}.ts`.
 - **Terms of Service + Privacy Policy acceptance at registration.** Two separate, pre-checked
   checkboxes on the entry screen, each linking to a real, served, versioned document. Acceptance is
   validated server-side (422 + no email when missing), carried on the challenge, and persisted to the

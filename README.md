@@ -10,7 +10,9 @@ specified as a reusable skill that works in **any stack** — Node/Express, Next
 Go, PHP/Laravel, FastAPI, or a custom backend.
 
 One email field in. An 8-digit code. Done. No password, no "does this account exist?" leak, no
-dead-end UX.
+dead-end UX. On top of that: optional **TOTP two-factor**, **one-year sessions** that users and admins
+can shorten, a **device list you can revoke**, **verified login-email changes**, and an **admin console
+with a full audit log**.
 
 This is **not** tied to a framework. It defines the flow, the API contract, the data model, the
 security invariants, and the UX behaviours — then tells you (or your agent) how to implement them in
@@ -53,7 +55,7 @@ tickets. Passwordless OTP auth removes the thing attackers steal (the password) 
 | **Single email field** | One clean input for both login and registration (auto-register on first code). |
 | **Email-only registration** | Sign-up is the same single email field — no name, no password; the account is created on the first successful code. |
 | **Terms + Privacy acceptance** | Two separate, **pre-checked** boxes under the email field, each linking to a real, versioned, served page. Required server-side; accepted version + timestamp stored on the account. |
-| **First-login profile completion** | Since registration collects only email, a first-time login is sent to a profile-edit page with a "complete your profile" flash message. |
+| **First-login profile completion** | Since registration collects only email, a first-time login is sent to the profile page with a "complete your profile" flash message. |
 | **Anti-enumeration** | The request endpoint never queries the account store; identical response either way. |
 | **Dynamic button** | Client-side email regex enables the submit button the moment the address is valid. |
 | **Code entry** | Single `one-time-code` field (preferred) or an 8-box grid with auto-focus and paste-to-fill. |
@@ -61,8 +63,14 @@ tickets. Passwordless OTP auth removes the thing attackers steal (the password) 
 | **Server-synced resend** | 30-second countdown; server independently enforces the cooldown + rate limits. |
 | **Immediate inline errors** | Wrong/expired code shows an inline message, no page reload. |
 | **Hashed OTPs** | Codes stored as bcrypt/argon2id hashes, compared in constant time, auto-expiring. |
-| **Hardened session** | Session regeneration on login, CSRF protection, transient state cleared. |
+| **Hardened session** | Fresh token on every login/2FA/email change, tokens stored hashed, CSRF protection, transient state cleared. |
 | **Contact button** | A "Trouble logging in? Contact admin" button on every auth page, so a user is never stuck. |
+| **Two-factor authentication** | Optional TOTP from an authenticator app, + 10 single-use recovery codes. A login with 2FA on returns no session until the second step; replay of an accepted code is rejected. |
+| **One-year sessions** | Default 365 days, driven by one policy: users pick their own inside an admin-set band; admins set the default, ceiling, and any individual user's duration. New sessions only. |
+| **Device list & revocation** | Every session carries device, coarse location, IP and timestamps. Users see them and sign any device out; tokens are stored hashed. |
+| **Verified login-email change** | Code to the new address, notice to the old, step-up auth if 2FA is on, all other sessions revoked, old address kept in history. |
+| **Admin console** | Session policy, user directory, per-user devices/login history/email-change log/2FA state, device revocation, 2FA reset. Role-gated and audited. |
+| **Audit log** | Append-only record of sign-ins, 2FA changes, revocations, duration changes, email changes and admin actions. Users see their own; admins see the account. |
 | **Face ID / biometric login** | Optional mobile re-auth: a device-bound key (Secure Enclave / Android Keystore) signs a server challenge, with device limits and revocation. |
 | **Social login** | "Continue with Google / GitHub / LinkedIn" via OAuth/OIDC — verified-email-only account linking, no takeover. |
 
@@ -79,11 +87,23 @@ references/
 ├── reference-implementation.md       # Language-neutral pseudocode to translate into any stack
 ├── biometric-login.md                # Face ID / Touch ID login architecture for mobile
 ├── social-login.md                   # OAuth/OIDC social login (Google, GitHub, LinkedIn)
-└── legal-consent.md                  # Terms/Privacy acceptance: pre-checked boxes, versioning, pages
+├── legal-consent.md                  # Terms/Privacy acceptance: pre-checked boxes, versioning, pages
+├── two-factor.md                     # TOTP enrollment, second step, replay guard, recovery codes
+├── session-management.md             # Duration policy, hashed tokens, device list, revocation
+├── email-change.md                   # Verified login-email change, dual notification, sessions
+└── admin-and-audit.md                # Admin roles + console, audit schema, what to record
 examples/
-├── node-express/                     # TypeScript/Express backend (OTP + consent + biometric) + tests
+├── node-express/                     # TypeScript/Express backend + tests
+│   ├── src/totp.ts                   # RFC 6238 TOTP, base32, recovery codes (no deps)
+│   ├── src/sessionPolicy.ts          # 365-day default, admin band, user preference
+│   ├── src/store.ts                  # hashed session tokens, devices, MFA, email-change requests
+│   ├── src/twofactor.ts              # enrollment, verify, replay guard, recovery codes
+│   ├── src/emailChange.ts            # double-verified address change
+│   ├── src/audit.ts                  # append-only audit log
 │   ├── src/legal-pages.ts            # the real /terms and /privacy documents, served
-│   └── src/views.ts                  # the pre-checked sign-in form at /sign-in
+│   ├── src/views.ts                  # sign-in + second-factor screens
+│   ├── src/views-profile.ts          # profile: 2FA, duration, devices, history, email change
+│   └── src/views-admin.ts            # admin settings + user investigation
 ├── ios-faceid/                       # Swift Face ID client
 └── android-biometric/                # Kotlin biometric client
 CHANGELOG.md                          # version history — pin by tag/commit
@@ -100,10 +120,12 @@ POST /auth/otp/request  { email, acceptedTerms, acceptedPrivacy }
                                                  consent validated first — no mail without it
                                                  no user lookup — enumeration-safe
         ↓ (verify view: code entry, 30s countdown, "check spam" banner)
-POST /auth/otp/verify   { requestId, code }    → constant-time check → find-or-create user → login
+POST /auth/otp/verify   { requestId, code }    → constant-time check → find-or-create user
                                                  consent version + timestamp persisted on the account
+        ↓ 2FA on?
+POST /auth/2fa/verify   { mfaToken, code }     → TOTP or recovery code → only now a session is issued
         ↓
-redirect → /dashboard
+redirect → /dashboard (first login → /profile)
 ```
 
 ---
@@ -122,6 +144,12 @@ Every one of these is enforced by the spec and demonstrated in `examples/node-ex
 | **Session regeneration + CSRF** | Session fixation and cross-site request forgery. |
 | **Email-verified on OTP** | Unverified accounts — proving the code proves the inbox. |
 | **Server-enforced consent** | Registration without an explicit Terms + Privacy acceptance — 422, no code sent. |
+| **No session before the second factor** | 2FA bypass — the OTP step returns only a single-use `mfaToken`. |
+| **TOTP replay guard** | Reusing a captured code for the rest of its 30-second window. |
+| **Hashed session tokens** | Session theft from a database dump — a dump yields no usable tokens. |
+| **Policy-capped sessions** | Unbounded session lifetime; per-device revocation is instant. |
+| **Double-verified email change** | Silent takeover — the new address must confirm, the old one is told. |
+| **Role-gated, audited admin** | Insider misuse; every look at a user record is logged. |
 | **Authenticated biometric enrollment** | Key injection — only a signed-in user can enroll a device. |
 | **Sender auth (SPF/DKIM/DMARC) + bounce safety** | Deliverability failure and bounce-based enumeration. |
 | **Retention & PII controls** | Stale data growth and GDPR/CCPA exposure. |
@@ -145,6 +173,11 @@ A full **threat model** — what each control defends against and why — is in
 - **Defense in depth** — hashed OTPs, constant-time comparison, expiry, attempt limits, and
   server-authoritative rate limiting.
 - **Portable** — one spec, any backend, with concrete Node/Swift/Kotlin examples.
+- **Recoverable** — optional TOTP with single-use recovery codes and an audited admin reset, so a lost
+  phone never means a lost account.
+- **Controllable** — one-year sessions by default, user-adjustable inside an admin band, with a device
+  list that can revoke any session instantly.
+- **Accountable** — every sign-in, security change and admin look at a user record is in the audit log.
 - **Optional biometric layer** — a phishing-resistant, device-bound one-tap unlock on mobile.
 
 **Limitations**
@@ -159,8 +192,11 @@ A full **threat model** — what each control defends against and why — is in
   domain. If the code lands in spam, the flow stalls.
 - **Unified entry trades off email bombing.** It must send to any address to avoid enumeration; the
   send rate limits are the guardrail.
-- **Not an identity provider.** No social login, SSO, TOTP, or password-recovery story — it's a
-  focused email-OTP primitive you compose into a larger auth system.
+- **Not a full identity provider.** Social login (Google/GitHub/LinkedIn) and TOTP are included, but
+  there is no SAML/enterprise SSO, no WebAuthn/passkey registration, and no team/tenant model — compose
+  those in when you need them.
+- **The admin console is deliberately small.** Policy + per-user investigation, not a general CRM; add
+  endpoints only with the same role guard and audit trail.
 - **Examples are illustrative**, not production drop-ins (in-memory stores, `console.log` mail).
 
 ---
@@ -217,6 +253,84 @@ versioning, and a contents checklist for each document — is in `references/leg
 
 ---
 
+## Two-factor authentication (optional)
+
+A user turns it on in their profile; the next login asks for a code from their authenticator app.
+
+- **TOTP (RFC 6238), no dependencies** — a 160-bit secret, `otpauth://` URI for any authenticator app,
+  6-digit codes with ±1 step of clock drift.
+- **Enrollment is two-phase** — the secret is only activated after the user proves the app works, and
+  that moment issues **10 single-use recovery codes** so a lost phone is never a locked account.
+- **No session before the second factor** — `/auth/otp/verify` returns `requires2fa` + a 5-minute
+  single-use `mfaToken`; only `/auth/2fa/verify` mints a session, with a fresh token.
+- **Replay is rejected** — the last accepted time step is stored, and a code from an already-used step
+  is refused for the rest of its window.
+- **Brute force is budgeted** — attempts per challenge plus one shared per-email failure budget across
+  login, disable, regeneration, and email-change step-up.
+
+`references/two-factor.md` · `examples/node-express/src/{totp,twofactor}.ts`
+
+---
+
+## Sessions, devices & login duration
+
+**A sign-in lasts one year by default** — and it is a policy, not a hardcoded number.
+
+```
+effective days = clamp(user preference ?? admin default, admin min, admin max)
+```
+
+| Who | What they control |
+|-----|-------------------|
+| Admin | Default (365), minimum, maximum, whether users may choose, optional idle timeout |
+| User | Their own duration inside that band, from the profile |
+| Admin | Any individual user's duration |
+
+- **New sessions only.** Lowering the default never logs anyone out mid-session, and raising it never
+  extends a session that already exists.
+- **Tokens are stored hashed** — a leaked database contains no usable sessions.
+- **Every device is visible**: device label, coarse location, IP, signed in, last active, whether it is
+  the current one. Sign any device out, or every other device in one click.
+- **Revocation is immediate** and keeps the record, so the history still shows what happened.
+
+`references/session-management.md` · `examples/node-express/src/{sessionPolicy,store}.ts`
+
+---
+
+## Changing the login email
+
+In a passwordless system the address *is* the credential, so the change is verified twice:
+
+1. Signed in, the user submits the new address — with a current 2FA code if 2FA is on.
+2. A code goes to the **new** address; a security notice goes to the **old** one.
+3. Confirming moves the account, keeps the old address in history, **signs out every other device**,
+   rotates the current session token, and writes audit events at request and confirm.
+
+Refusals stay generic ("That address cannot be used for this account") so the endpoint cannot be used
+to enumerate accounts. One pending change per account, rate-limited per hour.
+
+`references/email-change.md` · `examples/node-express/src/emailChange.ts`
+
+---
+
+## Admin console & audit log
+
+Administrators get a small, deliberate console: session policy, the user directory, and one account at
+a time — devices (including revoked), login history, email-change log, 2FA state, per-user duration,
+device revocation, and a 2FA reset for lockout.
+
+- **Roles are stored** and bootstrapped from `ADMIN_EMAILS`; no endpoint grants a role.
+- **Admins never see secrets** — not tokens, TOTP secrets, or recovery codes.
+- **Every action is audited**, including `admin.user_viewed` — looking at someone's history is itself a
+  privacy-relevant event.
+- **The log is append-only**; retention is a scheduled job aligned with the Privacy Policy.
+- **Users see their own slice** on their profile: sign-ins and the security changes they made,
+  including every login-email change.
+
+`references/admin-and-audit.md` · `examples/node-express/src/{audit,roles,views-admin}.ts`
+
+---
+
 ## Pull it & start using
 
 Copy this prompt into your agent (Claude Code, Codex, Cursor, OpenCode, …) to install the skill and
@@ -233,6 +347,9 @@ and implement email-OTP login for this project following its spec exactly:
 - A "Trouble logging in? Contact admin" button on every auth page, and inline errors with no reload.
 - Two separate Terms of Service and Privacy Policy checkboxes, pre-checked, each linking to a real
   served page; require an explicit acceptance server-side and store the accepted version + timestamp.
+- Optional TOTP two-factor with recovery codes, a replay guard, and no session issued before the second
+  step; one-year sessions with a user-selectable duration inside an admin-set band; a device list with
+  revocation; a verified login-email change; an admin console; and an append-only audit log.
 - The full security rules: hashed OTPs (bcrypt/argon2id), constant-time compare, expiry + attempt
   limits, per-email/per-IP rate limiting, session regeneration, and zero account enumeration.
 
@@ -300,3 +417,21 @@ Terms of Service, ToS, terms and conditions, privacy policy, legal pages, consen
 acceptance, privacy acceptance, pre-checked checkbox, checked by default, GDPR consent record,
 consent versioning, re-acceptance, requiresConsent, policy versioning, effective date, data retention
 policy, cookie notice, account deletion, DPA, CCPA notice at collection, website legal pages.
+
+Two-factor authentication, 2FA, MFA, TOTP, time-based one-time password, RFC 6238, RFC 4226, HOTP,
+authenticator app, Google Authenticator, Authy, 1Password, otpauth URI, QR code, recovery codes,
+backup codes, second factor, step-up authentication, replay attack, TOTP replay, enrollment, disable
+2FA, admin reset 2FA, second-factor bypass.
+
+Session management, session duration, remember me, stay signed in, one year session, 365 days, session
+policy, idle timeout, session expiry, session token, hashed session token, opaque token, device list,
+signed-in devices, logout all devices, revoke session, session fixation, token rotation, last seen,
+login history, sign-in history, active sessions, user agent, IP address, geolocation, coarse location,
+device label, session audit.
+
+Change email, change login email, email change verification, verify new email, double opt-in, account
+recovery, credential change, account takeover prevention, previous emails, email history.
+
+Admin panel, admin dashboard, admin console, role-based access control, RBAC, ADMIN_EMAILS, user
+management, user investigation, audit log, audit trail, append-only log, security log, event log,
+compliance audit, user viewed, GDPR access log, SOC 2 audit trail, tamper evidence, retention policy.

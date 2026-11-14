@@ -1,17 +1,23 @@
-# Node + Express reference (email OTP + biometric server side)
+# Node + Express reference
 
-A TypeScript/Express implementation of the email-OTP flow and the server half of biometric login.
+A TypeScript/Express implementation of the whole skill: email OTP, Terms/Privacy consent, optional TOTP
+two-factor, one-year policy sessions, the profile page (devices, history, email change), the admin
+console + audit log, and the server half of biometric login.
 
 ## Run
 
 ```bash
 npm install
 npm run dev        # tsx watch, http://localhost:3000
-npm test           # unit tests (otp + rate limiter + consent)
+npm test           # 75 unit + HTTP integration tests
 ```
 
 Then open <http://localhost:3000/sign-in>. The two acceptance boxes are pre-checked and link to the
-real documents at `/terms` and `/privacy`.
+real documents at `/terms` and `/privacy`. Sign in, and the profile at `/profile` gives you 2FA,
+session duration, the device list and the login history.
+
+Admin: start with `ADMIN_EMAILS=you@example.com npm run dev` and sign in with that address — `/admin`
+opens the policy settings and the user directory.
 
 ## Endpoints
 
@@ -21,7 +27,7 @@ real documents at `/terms` and `/privacy`.
 | GET | `/terms` | — | — | **real** Terms of Service (versioned, dated) |
 | GET | `/privacy` | — | — | **real** Privacy Policy (versioned, dated) |
 | POST | `/auth/otp/request` | `{ email, acceptedTerms, acceptedPrivacy }` | — | issues + "emails" a code; 422 and no mail without both acceptances; uniform response (enumeration-safe) |
-| POST | `/auth/otp/verify` | `{ requestId, code }` | — | verifies, find-or-create user, persists the accepted versions, returns a session token + redirect (new users → `/profile/edit` with a welcome flash) |
+| POST | `/auth/otp/verify` | `{ requestId, code }` | — | verifies, find-or-create user, persists the accepted versions, returns a session token + redirect (new users → `/profile` with a welcome flash) |
 | POST | `/auth/otp/resend` | `{ requestId }` | — | refreshes the same challenge after the 30s cooldown |
 | POST | `/auth/logout` | — | Bearer | destroys the session |
 | POST | `/auth/biometric/enroll` | `{ publicKey, deviceId, label }` | **Bearer** | store a device public key (authenticated) |
@@ -30,11 +36,33 @@ real documents at `/terms` and `/privacy`.
 | POST | `/auth/biometric/verify` | `{ email, challengeId, signature }` | — | verifies the signature → session |
 | GET | `/auth/social/:provider` | — | — | starts OAuth (Google/GitHub/LinkedIn); redirects to the provider |
 | GET | `/auth/social/:provider/callback` | `?code&state` | — | verifies the ID token / fetches profile, then reconciles via `decideAccountAction` |
+| POST | `/auth/2fa/verify` | `{ mfaToken, code }` | — | second factor (TOTP or recovery code) → session; the only way in when 2FA is on |
+| GET | `/profile` | — | Session | profile page: email, 2FA, duration, devices, history |
+| PATCH | `/profile/session-days` | `{ days }` | Session | own login duration (`null` = admin default) |
+| POST | `/profile/sessions/:id/revoke` | — | Session | sign a device out |
+| POST | `/profile/sessions/revoke-others` | — | Session | sign out every other device |
+| POST | `/profile/2fa/start` | — | Session | issue a pending TOTP secret + `otpauth://` URI |
+| POST | `/profile/2fa/confirm` | `{ code }` | Session | activate 2FA, return 10 recovery codes once |
+| POST | `/profile/2fa/disable` | `{ code }` | Session | turn 2FA off (requires a current code) |
+| POST | `/profile/2fa/recovery-codes` | `{ code }` | Session | regenerate recovery codes |
+| POST | `/profile/email/request` | `{ newEmail, code? }` | Session | code to the new address, notice to the old |
+| POST | `/profile/email/confirm` | `{ code }` | Session | move the account, revoke other devices, rotate token |
+| POST | `/profile/email/cancel` | — | Session | discard the pending change |
+| GET | `/admin` | — | **Admin** | session policy + user directory |
+| GET | `/admin/users/:email` | — | **Admin** | devices, login history, email-change log, 2FA state |
+| PATCH | `/admin/settings` | `{ defaultDays, minDays, maxDays, allowUserOverride, idleDays }` | **Admin** | deployment session policy |
+| PATCH | `/admin/users/:email/session-days` | `{ days }` | **Admin** | per-user duration override |
+| POST | `/admin/users/:email/sessions/:id/revoke` | — | **Admin** | revoke a user's device |
+| POST | `/admin/users/:email/2fa/reset` | — | **Admin** | emergency 2FA reset (revokes their sessions) |
 
 ## What is intentionally simplified
 
 - **Stores are in-memory** (`store.ts`). Replace with Postgres/Redis; add a scheduled purge for expired
-  challenges and sessions (retention). The record shapes are what matter.
+  challenges and sessions (retention) and ship audit events to append-only storage. The record shapes
+  are what matter.
+- **The bearer token is kept in `sessionStorage`** by the pages to keep the example small. In production
+  use an `HttpOnly; Secure; SameSite` cookie for server-rendered apps, or the platform keychain for
+  native clients — never `localStorage`.
 - **Rate limiter is a sliding window** (`rateLimit.ts`) with `tooMany`/`hit` split. Use Redis
   `INCR`+`EXPIRE` in production.
 - **Sessions are opaque server-side tokens** (expiring, revocable) — the "opaque token in a secure

@@ -141,13 +141,18 @@ function verify_otp(request_id, code):
     user.email_verified_at = now
     user = record_consent(user, challenge)     # see below
     save user
-
-    establish_session(user)                # regenerate session id / issue short-lived signed token
     clear_transient_state(request_id)
+
+    # SECOND FACTOR: if enabled, stop here — issue a short-lived, single-use
+    # mfaToken bound to this email and return it with requires2fa. No session.
+    if user.two_factor_enabled_at != null:
+        return 200 { ok: true, requires2fa: true, mfa_token: issue_mfa_token(email), expires_in: 300 }
+
+    establish_session(user)                # fresh opaque token, policy duration, device metadata
 
     # First-time registration collected only an email — send them to complete
     # their profile; returning users go straight to the dashboard.
-    redirect = is_new ? "/profile/edit" : "/dashboard"
+    redirect = is_new ? "/profile" : "/dashboard"
     response = { ok: true, redirect }
     if is_new: response.flash = "Welcome! Complete your profile to get started."
     if consent_is_stale(user): response.requiresConsent = true

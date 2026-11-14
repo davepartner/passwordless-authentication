@@ -128,7 +128,7 @@ Never fall through to linking on an unverified email.
 
 - `GET /auth/social/:provider` — build + redirect to the authorize URL (`state`, `nonce`, PKCE).
 - `GET /auth/social/:provider/callback` — handle `code` + `state`, verify, reconcile, establish session,
-  redirect (`/dashboard`, or `/profile/edit` for a first-time account).
+  redirect (`/dashboard`, or `/profile` for a first-time account).
 
 ---
 
