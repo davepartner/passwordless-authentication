@@ -26,6 +26,10 @@ on ──admin reset (verified out of band)──▶ off
 - The pending secret expires (15 minutes) and is generated fresh on every start.
 - Enrollment, disable, and recovery-code regeneration are **authenticated** endpoints — never reachable
   anonymously.
+- With year-long sessions, consider requiring a **step-up** (a fresh email code, or an existing TOTP
+  code once enabled) before turning 2FA *on*: a stolen session could otherwise add a factor the real
+  owner does not hold. The example accepts any authenticated session for enrollment and enforces the
+  factor for every downgrade (disable) and for email changes.
 
 ---
 

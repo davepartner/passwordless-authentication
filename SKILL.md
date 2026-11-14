@@ -368,6 +368,8 @@ already have both codes.
   disable, regeneration, and email-change step-up.
 - **Disabling requires a valid current code** and an authenticated session. An admin reset exists for
   lockout, requires out-of-band identity verification, is audited, and revokes the user's sessions.
+- With long-lived sessions, consider a **step-up before enabling** 2FA — a stolen session could
+  otherwise add a factor the owner does not hold.
 
 Full design: `references/two-factor.md`. Reference code: `examples/node-express/src/totp.ts`,
 `twofactor.ts`, plus the profile page in `views-profile.ts`.
